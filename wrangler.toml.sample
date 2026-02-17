@@ -1,0 +1,15 @@
+name = "ghost-discord-worker"
+main = "src/index.ts"
+compatibility_date = "2024-12-02"
+
+[[kv_namespaces]]
+binding = "GHOST_DISCORD_MAPPING"
+id = "xxxxxxx"
+
+# Secrets (set via `wrangler secret put <NAME>`):
+# - WEBHOOK_SECRET  = Secret for validating incoming webhook requests (e.g., "my_webhook_secret_value")
+# - ADMIN_SECRET    = Secret for admin authentication (e.g., "my_admin_secret_value")
+# - DISCORD_BOT_TOKEN = Token for your Discord bot (e.g., "OTk5ODg4ODg4ODg4ODg4ODg4.YYYYYY.Z
+# - DISCORD_GUILD_ID = ID of your Discord server (e.g., 123456789012345678)
+# - DISCORD_ROLE_MEMBER = ID of the "Member" role in your Discord server (e.g., 123456789012345678) 
+# - DISCORD_ROLE_PREMIUM = ID of the "Premium" role in your Discord server (e.g., 123456789012345678)
