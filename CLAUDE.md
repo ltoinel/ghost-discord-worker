@@ -8,19 +8,22 @@
 
 ## Architecture
 
-Cloudflare Worker (TypeScript) that receives Ghost CMS webhooks and updates Discord roles.
+Cloudflare Worker (TypeScript) that receives Ghost CMS webhooks and updates Discord roles. Discord slash commands (`/link`, `/unlink`) allow users to link their email. The `/link` command verifies the email exists in Ghost via the Admin API before creating the mapping and assigning roles.
 
 ```
 Ghost CMS ──webhook──▶ Cloudflare Worker ──Discord API──▶ Discord Server
                               │
+Discord User ──/link──▶ Cloudflare Worker ──Ghost Admin API──▶ Ghost CMS
+                              │
                         Cloudflare KV
-                     (email → discord_user_id)
+                     (email ↔ discord_user_id)
 ```
 
 ### Routes
 
 | Route | Method | Auth | Description |
 |-------|--------|------|-------------|
+| `/discord` | POST | Ed25519 signature | Discord interactions (slash commands) |
 | `/webhook` | POST | `?secret=` query param | Ghost webhook for member.added / member.updated |
 | `/webhook/deleted` | POST | `?secret=` query param | Ghost webhook for member.deleted |
 | `/link` | POST | `Authorization: Bearer` | Create email → discord_user_id mapping |
@@ -36,6 +39,13 @@ Ghost CMS ──webhook──▶ Cloudflare Worker ──Discord API──▶ Di
 | member.deleted | Remove all roles |
 | member.updated (free→paid) | Add "Membre Premium" role |
 | member.updated (paid→free) | Remove "Membre Premium" role |
+
+### Slash Commands
+
+| Command | Action |
+|---------|--------|
+| `/link <email>` | Verify email in Ghost, store mapping, assign roles |
+| `/unlink` | Remove mapping |
 
 ## Configuration
 
@@ -56,8 +66,11 @@ npx wrangler secret put WEBHOOK_SECRET
 npx wrangler secret put ADMIN_SECRET
 npx wrangler secret put DISCORD_BOT_TOKEN
 npx wrangler secret put DISCORD_GUILD_ID
+npx wrangler secret put DISCORD_PUBLIC_KEY
 npx wrangler secret put DISCORD_ROLE_MEMBER
 npx wrangler secret put DISCORD_ROLE_PREMIUM
+npx wrangler secret put GHOST_URL
+npx wrangler secret put GHOST_ADMIN_API_KEY
 ```
 
 For local development, create a `.dev.vars` file:
@@ -67,8 +80,11 @@ WEBHOOK_SECRET=test
 ADMIN_SECRET=admin-secret
 DISCORD_BOT_TOKEN=your-bot-token
 DISCORD_GUILD_ID=your-guild-id
+DISCORD_PUBLIC_KEY=your-public-key
 DISCORD_ROLE_MEMBER=your-member-role-id
 DISCORD_ROLE_PREMIUM=your-premium-role-id
+GHOST_URL=https://your-ghost-site.com
+GHOST_ADMIN_API_KEY=your-id:your-secret
 ```
 
 ### Ghost Configuration
