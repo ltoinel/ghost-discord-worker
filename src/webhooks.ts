@@ -10,30 +10,76 @@ interface WebhookContext {
 }
 
 /**
- * Authenticates the webhook secret, parses the JSON payload, and resolves the Discord user mapping.
+ * Verifies the X-Ghost-Signature HMAC-SHA256 header.
+ * Ghost signs the raw request body with the webhook secret and sends:
+ *   X-Ghost-Signature: sha256=<hex_digest>, t=<timestamp>
+ * @returns The raw body string on success, or null on failure.
+ */
+async function verifyGhostSignature(request: Request, env: Env): Promise<string | null> {
+	const signature = request.headers.get("X-Ghost-Signature");
+	if (!signature) return null;
+
+	// Parse "sha256=<hex>, t=<timestamp>"
+	const parts: Record<string, string> = {};
+	for (const part of signature.split(",")) {
+		const [k, v] = part.trim().split("=", 2);
+		if (k && v) parts[k] = v;
+	}
+	const receivedHex = parts["sha256"];
+	const timestamp = parts["t"];
+	if (!receivedHex || !timestamp) return null;
+
+	// Ghost uses Date.now() (milliseconds) for the timestamp.
+	// Reject requests older than 5 minutes to prevent replay attacks.
+	const ts = parseInt(timestamp, 10);
+	const now = Date.now();
+	if (isNaN(ts) || Math.abs(now - ts) > 5 * 60 * 1000) return null;
+
+	const body = await request.text();
+
+	// Ghost signs `${jsonPayload}${timestamp}` — body concatenated with the ts value.
+	const key = await crypto.subtle.importKey(
+		"raw",
+		new TextEncoder().encode(env.WEBHOOK_SECRET),
+		{ name: "HMAC", hash: "SHA-256" },
+		false,
+		["sign"],
+	);
+	const mac = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(body + timestamp));
+	const computedHex = Array.from(new Uint8Array(mac))
+		.map((b) => b.toString(16).padStart(2, "0"))
+		.join("");
+
+	if (!timingSafeEqual(computedHex, receivedHex)) return null;
+
+	return body;
+}
+
+/**
+ * Authenticates the webhook signature, parses the JSON payload, and resolves the Discord user mapping.
+ * For delete events, the email is in member.previous (member.current is empty).
  * @returns A WebhookContext on success, or an error Response on failure (auth, parse, or missing mapping).
  */
-async function parseWebhookRequest(request: Request, env: Env): Promise<WebhookContext | Response> {
-	const url = new URL(request.url);
-	const secret = url.searchParams.get("secret");
-
-	if (!secret || !timingSafeEqual(secret, env.WEBHOOK_SECRET)) {
+async function parseWebhookRequest(request: Request, env: Env, deleted = false): Promise<WebhookContext | Response> {
+	const body = await verifyGhostSignature(request, env);
+	if (body === null) {
 		return json({ error: "Unauthorized" }, 401);
 	}
 
 	let payload: GhostWebhookPayload;
 	try {
-		payload = await request.json();
+		payload = JSON.parse(body);
 	} catch {
 		return json({ error: "Invalid JSON" }, 400);
 	}
 
 	const { member } = payload;
-	if (!member?.current?.email) {
-		return json({ error: "Invalid payload: missing member.current.email" }, 400);
+	const source = deleted ? member?.previous : member?.current;
+	if (!source?.email) {
+		return json({ error: "Invalid payload: missing member email" }, 400);
 	}
 
-	const email = member.current.email.toLowerCase();
+	const email = source.email.toLowerCase();
 	const discordUserId = await env.GHOST_DISCORD_MAPPING.get(email);
 	if (!discordUserId) {
 		console.warn(`No Discord mapping found for email: ${email}`);
@@ -79,7 +125,7 @@ export async function handleWebhook(request: Request, env: Env): Promise<Respons
  * Removes both "Membre" and "Membre Premium" roles from the linked Discord user.
  */
 export async function handleWebhookDeleted(request: Request, env: Env): Promise<Response> {
-	const result = await parseWebhookRequest(request, env);
+	const result = await parseWebhookRequest(request, env, true);
 	if (result instanceof Response) return result;
 
 	const { email, discordUserId } = result;

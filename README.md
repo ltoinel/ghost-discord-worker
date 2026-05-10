@@ -81,9 +81,9 @@ In **Ghost Admin → Settings → Integrations → Custom Integration**, create 
 
 | Event | URL |
 |---|---|
-| Member added | `https://<worker>.workers.dev/webhook?secret=<WEBHOOK_SECRET>` |
-| Member updated | `https://<worker>.workers.dev/webhook?secret=<WEBHOOK_SECRET>` |
-| Member deleted | `https://<worker>.workers.dev/webhook/deleted?secret=<WEBHOOK_SECRET>` |
+| Member added | `https://<worker>.workers.dev/webhook` |
+| Member updated | `https://<worker>.workers.dev/webhook` |
+| Member deleted | `https://<worker>.workers.dev/webhook/deleted` |
 
 ### 6. Register Discord slash commands
 
@@ -101,14 +101,12 @@ The bot's role must be **higher** in the server's role hierarchy than the "Membe
 
 Handles `member.added` and `member.updated` events from Ghost.
 
-- **Auth**: `?secret=<WEBHOOK_SECRET>` query parameter
 - **Body**: Ghost webhook payload
 
 #### `POST /webhook/deleted`
 
 Handles `member.deleted` events from Ghost.
 
-- **Auth**: `?secret=<WEBHOOK_SECRET>` query parameter
 - **Body**: Ghost webhook payload
 
 ### Discord Interactions

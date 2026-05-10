@@ -59,6 +59,10 @@ export async function handleLinkDelete(request: Request, env: Env): Promise<Resp
 		return json({ error: "Missing email" }, 400);
 	}
 
+	if (!isValidEmail(body.email)) {
+		return json({ error: "Invalid email format" }, 400);
+	}
+
 	const email = body.email.toLowerCase();
 	const discordUserId = await env.GHOST_DISCORD_MAPPING.get(email);
 	await env.GHOST_DISCORD_MAPPING.delete(email);
@@ -76,6 +80,10 @@ export async function handleLinkGet(email: string, request: Request, env: Env): 
 	}
 
 	const normalizedEmail = email.toLowerCase();
+	if (!isValidEmail(normalizedEmail)) {
+		return json({ error: "Invalid email format" }, 400);
+	}
+
 	const discordUserId = await env.GHOST_DISCORD_MAPPING.get(normalizedEmail);
 
 	if (!discordUserId) {
