@@ -14,7 +14,7 @@ All values are set via `wrangler secret put <NAME>` (production) or `.dev.vars` 
 | `DISCORD_ROLE_MEMBER` | string (numeric) | Snowflake ID of the "Member" role |
 | `DISCORD_ROLE_PREMIUM` | string (numeric) | Snowflake ID of the "Premium Member" role |
 | `GHOST_URL` | URL (no trailing slash) | Base URL of the Ghost site (e.g., `https://blog.example.com`) |
-| `GHOST_ADMIN_API_KEY` | string (`id:hex_secret`) | Ghost Admin API key for member lookups |
+| `GHOST_ADMIN_API_KEY` | string (`id:hex_secret`) | Ghost Admin API key — used during `/link <code>` redemption to fetch the member's paid/comped/free status (the JWT only proves email ownership, not subscription tier) |
 
 The `Env` interface in `src/types.ts` is the authoritative list of required bindings.
 
@@ -76,6 +76,8 @@ GHOST_ADMIN_API_KEY=your-id:your-secret
 | `npm run build` | `tsc --noEmit` — type-check only |
 | `npm run deploy` | `wrangler deploy` — push to Cloudflare |
 | `npm run types` | `wrangler types` — regenerate `Env`/binding types |
+| `npm test` | `vitest run` — single test run (requires Node ≥ 20 for Ed25519 in Web Crypto) |
+| `npm run test:watch` | `vitest` — watch mode |
 
 ## Ghost CMS Setup
 
@@ -173,19 +175,96 @@ The script:
 </div>
 
 <style>
-  .discord-link { max-width: 32rem; margin: 2rem auto; font-family: inherit; }
-  .discord-link button {
-    padding: 0.6rem 1.2rem; border: 0; border-radius: 6px;
-    background: #5865F2; color: #fff; font-weight: 600; cursor: pointer;
-  }
-  .discord-link button:disabled { opacity: 0.6; cursor: progress; }
-  .dl-code-row { display: flex; gap: 0.5rem; align-items: center; margin: 0.5rem 0; }
-  .dl-code {
-    font-size: 1.4rem; font-weight: 700; letter-spacing: 0.15em;
-    padding: 0.4rem 0.8rem; background: #f4f4f5; border-radius: 6px;
-  }
-  .dl-instructions { color: #555; font-size: 0.95rem; }
-  .dl-error { color: #b91c1c; }
+#discord-link, .discord-link {
+  background: linear-gradient(180deg, #1e1b4b 0%, #0f172a 100%);
+  border: 1px solid #4f46e5;
+  border-radius: 14px;
+  padding: 1.5rem 1.75rem;
+  margin: 1.5rem 0;
+  max-width: 640px;
+  box-shadow: 0 10px 30px rgba(79, 70, 229, 0.25),
+              inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+}
+
+#discord-link #dl-result {
+  margin-top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+#discord-link .dl-code-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+#dl-code, .dl-code {
+  background: #0f172a;
+  color: #ffffff;
+  border: 1px solid #475569;
+  padding: 0.6rem 1rem;
+  border-radius: 8px;
+  letter-spacing: 0.15em;
+  font-weight: 700;
+  font-size: 1.2rem;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04);
+}
+
+#dl-code-inline,
+.dl-instructions code {
+  background: #1e293b;
+  color: #f8fafc;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+  border: 1px solid #475569;
+}
+
+.dl-instructions {
+  color: #e2e8f0;
+  font-size: 0.95rem;
+  line-height: 1.55;
+  margin: 0;
+}
+
+#dl-countdown { color: #fcd34d; font-weight: 600; }
+
+#dl-btn, #dl-copy {
+  background: #4f46e5;
+  color: #fff;
+  font-weight: 700;
+  border: 1px solid #6366f1;
+  border-radius: 8px;
+  padding: 0.55rem 1rem;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.05s ease;
+}
+#dl-btn:hover, #dl-btn:focus-visible,
+#dl-copy:hover, #dl-copy:focus-visible {
+  background: #4338ca;
+  outline: 2px solid #a5b4fc;
+  outline-offset: 2px;
+}
+#dl-btn:active, #dl-copy:active { transform: translateY(1px); }
+
+.dl-error { color: #fca5a5; }
+
+#discord-link #dl-result[hidden] {
+  display: none !important;
+}
+
+#discord-link:has(#dl-code:empty) #dl-result {
+  display: none !important;
+}
+
+#dl-btn::before {
+  content: "🔑";
+  margin-right: 0.5em;
+  display: inline-block;
+  transform: translateY(1px);
+}
 </style>
 
 <script>
