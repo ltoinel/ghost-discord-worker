@@ -14,18 +14,23 @@ export async function verifyDiscordSignature(request: Request, publicKey: string
 	if (!signature || !timestamp) return null;
 
 	const body = await request.text();
-	const key = await crypto.subtle.importKey(
-		"raw",
-		hexToBytes(publicKey),
-		{ name: "Ed25519", namedCurve: "Ed25519" },
-		false,
-		["verify"],
-	);
 
-	const message = new TextEncoder().encode(timestamp + body);
-	const isValid = await crypto.subtle.verify("Ed25519", key, hexToBytes(signature), message);
-
-	return isValid ? body : null;
+	// hexToBytes throws on malformed hex; verify may throw on degenerate keys.
+	// Treat any failure here as "invalid signature" rather than letting it 500.
+	try {
+		const key = await crypto.subtle.importKey(
+			"raw",
+			hexToBytes(publicKey),
+			{ name: "Ed25519", namedCurve: "Ed25519" },
+			false,
+			["verify"],
+		);
+		const message = new TextEncoder().encode(timestamp + body);
+		const isValid = await crypto.subtle.verify("Ed25519", key, hexToBytes(signature), message);
+		return isValid ? body : null;
+	} catch {
+		return null;
+	}
 }
 
 /**

@@ -90,41 +90,54 @@ async function parseWebhookRequest(request: Request, env: Env, deleted = false):
 }
 
 /**
- * Handles Ghost member.added and member.updated webhook events.
- * - member.added: assigns "Membre" role + "Membre Premium" if paid/comped.
- * - member.updated: syncs the premium role on status transitions.
+ * Handles Ghost member.added webhook events (POST /webhook/added).
+ * Assigns the Member role, plus Premium if the new member is paid or comped.
  */
-export async function handleWebhook(request: Request, env: Env): Promise<Response> {
+export async function handleMemberAdded(request: Request, env: Env): Promise<Response> {
 	const result = await parseWebhookRequest(request, env);
 	if (result instanceof Response) return result;
 
 	const { email, discordUserId, member } = result;
-	const hasPrevious = member.previous && Object.keys(member.previous).length > 0;
-
-	if (!hasPrevious) {
-		console.log(`member.added: ${email} (${member.current.status})`);
-		await addRole(env, discordUserId, env.DISCORD_ROLE_MEMBER);
-		if (isPaid(member.current.status)) {
-			await addRole(env, discordUserId, env.DISCORD_ROLE_PREMIUM);
-		}
-	} else if (member.previous?.status && member.previous.status !== member.current.status) {
-		if (!isPaid(member.previous.status) && isPaid(member.current.status)) {
-			console.log(`member.updated (free->paid): ${email}`);
-			await addRole(env, discordUserId, env.DISCORD_ROLE_PREMIUM);
-		} else if (isPaid(member.previous.status) && !isPaid(member.current.status)) {
-			console.log(`member.updated (paid->free): ${email}`);
-			await removeRole(env, discordUserId, env.DISCORD_ROLE_PREMIUM);
-		}
+	console.log(`member.added: ${email} (${member.current.status})`);
+	await addRole(env, discordUserId, env.DISCORD_ROLE_MEMBER);
+	if (isPaid(member.current.status)) {
+		await addRole(env, discordUserId, env.DISCORD_ROLE_PREMIUM);
 	}
 
 	return json({ ok: true });
 }
 
 /**
- * Handles Ghost member.deleted webhook events.
- * Removes both "Membre" and "Membre Premium" roles from the linked Discord user.
+ * Handles Ghost member.updated webhook events (POST /webhook/updated).
+ * Syncs the Premium role on status transitions; paid↔comped and same-status updates are no-ops.
  */
-export async function handleWebhookDeleted(request: Request, env: Env): Promise<Response> {
+export async function handleMemberUpdated(request: Request, env: Env): Promise<Response> {
+	const result = await parseWebhookRequest(request, env);
+	if (result instanceof Response) return result;
+
+	const { email, discordUserId, member } = result;
+
+	if (!member.previous?.status || member.previous.status === member.current.status) {
+		return json({ ok: true });
+	}
+
+	if (!isPaid(member.previous.status) && isPaid(member.current.status)) {
+		console.log(`member.updated (free->paid): ${email}`);
+		await addRole(env, discordUserId, env.DISCORD_ROLE_PREMIUM);
+	} else if (isPaid(member.previous.status) && !isPaid(member.current.status)) {
+		console.log(`member.updated (paid->free): ${email}`);
+		await removeRole(env, discordUserId, env.DISCORD_ROLE_PREMIUM);
+	}
+
+	return json({ ok: true });
+}
+
+/**
+ * Handles Ghost member.deleted webhook events (POST /webhook/deleted).
+ * Removes both the Member and Premium roles from the linked Discord user.
+ * The KV mapping itself is preserved so re-subscriptions reuse the existing link.
+ */
+export async function handleMemberDeleted(request: Request, env: Env): Promise<Response> {
 	const result = await parseWebhookRequest(request, env, true);
 	if (result instanceof Response) return result;
 

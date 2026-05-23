@@ -5,13 +5,17 @@ A Cloudflare Worker that syncs Ghost CMS member events to Discord roles. When me
 ## Architecture
 
 ```
-Ghost CMS ──webhook──▶ Cloudflare Worker ──Discord API──▶ Discord Server
-                              │
-                        Cloudflare KV
-                     (email ↔ discord_user_id)
+Browser (Ghost)  ──JWT───▶ Cloudflare Worker ──JWKS──▶  Ghost CMS
+                                  │
+Ghost CMS ──webhook──────▶ Cloudflare Worker ──Discord API──▶ Discord Server
+                                  │
+Discord User ──/link <code>──▶ Cloudflare Worker ──Ghost Admin API──▶ Ghost CMS
+                                  │
+                            Cloudflare KV
+                      (email ↔ discord_user_id, code:CODE → email TTL)
 ```
 
-The worker uses a Cloudflare KV store to maintain a bidirectional mapping between Ghost member emails and Discord user IDs. When a Ghost webhook fires, the worker looks up the corresponding Discord user and updates their roles accordingly.
+The worker uses a Cloudflare KV store to maintain a bidirectional mapping between Ghost member emails and Discord user IDs. Linking is proof-of-ownership: a logged-in Ghost browser POSTs the member's signed JWT to `/code`, the Worker verifies it against Ghost's JWKS and returns a short-lived single-use code, which the user redeems in Discord via `/link <code>`. Webhooks then sync role transitions automatically.
 
 ## Event Mapping
 
@@ -27,7 +31,7 @@ The worker uses a Cloudflare KV store to maintain a bidirectional mapping betwee
 
 | Command | Description |
 |---|---|
-| `/link <email>` | Link your Discord account to your Ghost email. The email must belong to an existing Ghost member. Roles are assigned automatically based on membership level. |
+| `/link <code>` | Redeem a single-use linking code (obtained on the Ghost site via `POST /code` after JWT verification). Stores the mapping and assigns Discord roles based on Ghost membership status. |
 | `/unlink` | Unlink your Discord account from your Ghost email. |
 
 Each email can only be linked to one Discord account, and each Discord account can only be linked to one email.
@@ -81,8 +85,8 @@ In **Ghost Admin → Settings → Integrations → Custom Integration**, create 
 
 | Event | URL |
 |---|---|
-| Member added | `https://<worker>.workers.dev/webhook` |
-| Member updated | `https://<worker>.workers.dev/webhook` |
+| Member added | `https://<worker>.workers.dev/webhook/added` |
+| Member updated | `https://<worker>.workers.dev/webhook/updated` |
 | Member deleted | `https://<worker>.workers.dev/webhook/deleted` |
 
 ### 6. Register Discord slash commands
@@ -97,17 +101,17 @@ The bot's role must be **higher** in the server's role hierarchy than the "Membe
 
 ### Webhook Endpoints
 
-#### `POST /webhook`
+#### `POST /webhook/added`
 
-Handles `member.added` and `member.updated` events from Ghost.
+Handles `member.added` events from Ghost. Adds the Member role, plus the Premium role if the new member is paid or comped.
 
-- **Body**: Ghost webhook payload
+#### `POST /webhook/updated`
+
+Handles `member.updated` events from Ghost. Adds or removes the Premium role on free↔paid transitions; paid↔comped and same-status updates are no-ops.
 
 #### `POST /webhook/deleted`
 
-Handles `member.deleted` events from Ghost.
-
-- **Body**: Ghost webhook payload
+Handles `member.deleted` events from Ghost. Removes both the Member and Premium roles.
 
 ### Discord Interactions
 

@@ -1,8 +1,13 @@
 import type { Env } from "./types";
 import { json } from "./utils";
-import { handleWebhook, handleWebhookDeleted } from "./webhooks";
+import {
+	handleMemberAdded,
+	handleMemberUpdated,
+	handleMemberDeleted,
+} from "./webhooks";
 import { handleLinkPost, handleLinkDelete, handleLinkGet } from "./admin";
 import { handleDiscordInteraction } from "./commands";
+import { handleCodePost, handleCodeOptions } from "./code";
 
 /**
  * Cloudflare Worker entry point.
@@ -16,11 +21,20 @@ export default {
 		if (path === "/discord" && request.method === "POST") {
 			return handleDiscordInteraction(request, env);
 		}
-		if (path === "/webhook" && request.method === "POST") {
-			return handleWebhook(request, env);
+		if (path === "/code" && request.method === "POST") {
+			return handleCodePost(request, env);
+		}
+		if (path === "/code" && request.method === "OPTIONS") {
+			return handleCodeOptions(env);
+		}
+		if (path === "/webhook/added" && request.method === "POST") {
+			return handleMemberAdded(request, env);
+		}
+		if (path === "/webhook/updated" && request.method === "POST") {
+			return handleMemberUpdated(request, env);
 		}
 		if (path === "/webhook/deleted" && request.method === "POST") {
-			return handleWebhookDeleted(request, env);
+			return handleMemberDeleted(request, env);
 		}
 		if (path === "/link" && request.method === "POST") {
 			return handleLinkPost(request, env);

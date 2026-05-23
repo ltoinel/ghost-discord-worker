@@ -33,13 +33,19 @@ async function generateGhostJWT(env: Env): Promise<string> {
 	return `${signingInput}.${sigB64}`;
 }
 
+/** Escapes backslash and single-quote per Ghost NQL filter syntax to prevent filter injection. */
+function escapeNqlValue(value: string): string {
+	return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+}
+
 /**
  * Looks up a Ghost member by email via the Admin API.
  * @returns "found" with member data, "not_found", or "error" with a human-readable message.
  */
 export async function getGhostMember(email: string, env: Env): Promise<GhostLookupResult> {
 	const jwt = await generateGhostJWT(env);
-	const url = `${env.GHOST_URL}/ghost/api/admin/members/?filter=email:'${encodeURIComponent(email)}'&limit=1`;
+	const filterValue = encodeURIComponent(escapeNqlValue(email));
+	const url = `${env.GHOST_URL}/ghost/api/admin/members/?filter=email:'${filterValue}'&limit=1`;
 	let res: Response;
 	try {
 		res = await fetch(url, {

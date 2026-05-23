@@ -36,10 +36,10 @@ export function hexToBytes(hex: string): Uint8Array {
 }
 
 /** Creates a JSON Response with the appropriate Content-Type header. */
-export function json(data: unknown, status = 200): Response {
+export function json(data: unknown, status = 200, extraHeaders?: Record<string, string>): Response {
 	return new Response(JSON.stringify(data), {
 		status,
-		headers: { "Content-Type": "application/json" },
+		headers: { "Content-Type": "application/json", ...extraHeaders },
 	});
 }
 

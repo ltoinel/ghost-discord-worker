@@ -1,5 +1,5 @@
 import type { Env } from "./types";
-import { json, isValidEmail, isPaid } from "./utils";
+import { json, isPaid } from "./utils";
 import { verifyDiscordSignature, addRole } from "./discord";
 import { getGhostMember } from "./ghost";
 
@@ -29,7 +29,11 @@ export async function handleDiscordInteraction(request: Request, env: Env): Prom
 
 	if (interaction.type === InteractionType.APPLICATION_COMMAND) {
 		const commandName = interaction.data?.name;
-		const userId = interaction.member?.user?.id;
+		// Guild interactions expose member.user.id; DM/user-app interactions use user.id.
+		const userId = interaction.member?.user?.id ?? interaction.user?.id;
+		if (!userId) {
+			return ephemeralReply("Unable to identify your Discord account. Please try again from a server channel.");
+		}
 
 		if (commandName === "link") {
 			return handleLinkCommand(interaction, userId, env);
@@ -46,18 +50,21 @@ export async function handleDiscordInteraction(request: Request, env: Env): Prom
 }
 
 /**
- * Handles the /link slash command.
- * Verifies the email exists in Ghost, enforces 1:1 mapping between email and Discord account,
- * stores the bidirectional mapping, and assigns the appropriate Discord roles.
+ * Handles the /link <code> slash command.
+ * Redeems a single-use code (minted by POST /code after Ghost JWT verification),
+ * enforces 1:1 mapping between email and Discord account, stores the bidirectional
+ * mapping, and assigns the appropriate Discord roles.
  */
 async function handleLinkCommand(interaction: any, userId: string, env: Env): Promise<Response> {
-	const email = interaction.data.options?.[0]?.value?.toLowerCase();
-	if (!email) {
-		return ephemeralReply("Please provide your email.");
+	const rawCode = interaction.data.options?.[0]?.value;
+	if (!rawCode) {
+		return ephemeralReply("Please provide your linking code. Visit your Ghost site to generate one.");
 	}
 
-	if (!isValidEmail(email)) {
-		return ephemeralReply("Please provide a valid email address.");
+	const code = String(rawCode).trim().toUpperCase();
+	const email = await env.GHOST_DISCORD_MAPPING.get(`code:${code}`);
+	if (!email) {
+		return ephemeralReply("Invalid or expired code. Visit your Ghost site to generate a new one.");
 	}
 
 	const existingUserId = await env.GHOST_DISCORD_MAPPING.get(email);
@@ -72,14 +79,15 @@ async function handleLinkCommand(interaction: any, userId: string, env: Env): Pr
 
 	const ghostResult = await getGhostMember(email, env);
 	if (ghostResult.status === "error") {
-		return ephemeralReply(`An error occurred while verifying your email: ${ghostResult.message}`);
+		return ephemeralReply(`An error occurred while verifying your membership: ${ghostResult.message}`);
 	}
 	if (ghostResult.status === "not_found") {
-		return ephemeralReply("This email is not associated with any Ghost membership.");
+		return ephemeralReply("This email is no longer associated with any Ghost membership.");
 	}
 
 	await env.GHOST_DISCORD_MAPPING.put(email, userId);
 	await env.GHOST_DISCORD_MAPPING.put(`discord:${userId}`, email);
+	await env.GHOST_DISCORD_MAPPING.delete(`code:${code}`);
 
 	const errors: string[] = [];
 	const err1 = await addRole(env, userId, env.DISCORD_ROLE_MEMBER);
