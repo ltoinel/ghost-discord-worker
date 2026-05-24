@@ -4,16 +4,9 @@ A Cloudflare Worker that syncs Ghost CMS member events to Discord roles. When me
 
 ## Architecture
 
-```
-Browser (Ghost)  ──JWT───▶ Cloudflare Worker ──JWKS──▶  Ghost CMS
-                                  │
-Ghost CMS ──webhook──────▶ Cloudflare Worker ──Discord API──▶ Discord Server
-                                  │
-Discord User ──/link <code>──▶ Cloudflare Worker ──Ghost Admin API──▶ Ghost CMS
-                                  │
-                            Cloudflare KV
-                      (email ↔ discord_user_id, code:CODE → email TTL)
-```
+<p align="center">
+  <img src="docs/architecture.svg" alt="Architecture diagram: a Cloudflare Worker bridges Ghost CMS webhooks and Discord role mutations. Members prove email ownership by exchanging a Ghost-signed JWT for a single-use linking code redeemed via /link in Discord." width="900">
+</p>
 
 The worker uses a Cloudflare KV store to maintain a bidirectional mapping between Ghost member emails and Discord user IDs. Linking is proof-of-ownership: a logged-in Ghost browser POSTs the member's signed JWT to `/code`, the Worker verifies it against Ghost's JWKS and returns a short-lived single-use code, which the user redeems in Discord via `/link <code>`. Webhooks then sync role transitions automatically.
 
@@ -97,7 +90,46 @@ Register the `/link` and `/unlink` commands with the Discord API for your applic
 
 The bot's role must be **higher** in the server's role hierarchy than the "Member" and "Premium Member" roles it manages.
 
+### 8. Add the member linking page to your Ghost site
+
+Members need a one-click way to obtain their linking code. Create a Ghost page (e.g. `https://<your-site>/discord/`) and paste the **ready-to-use HTML + CSS + JS snippet** from [`spec/08-configuration.md`](spec/08-configuration.md#get-my-discord-code-page-theme-js) into an HTML card. The snippet:
+
+1. Calls Ghost's `/members/api/session` to obtain the current member's signed JWT (sent automatically with the session cookie — works only when logged in).
+2. POSTs the JWT to `/code` on the Worker.
+3. Displays the resulting 8-character code with a Copy button and a live countdown until expiry (10 min).
+
+Member-facing flow once the page is live:
+
+> 1. Sign in to your Ghost account.
+> 2. Visit the "Discord access" page → click **Get my Discord code**.
+> 3. In Discord, type `/link <code>` (or paste with the Copy button).
+> 4. Your roles are assigned instantly.
+
+#### 8.a (recommended) — nginx reverse proxy for `/code`
+
+If your Ghost site sits behind nginx, add a `location = /code` block so the browser calls `https://<your-site>/code` instead of `https://<worker>.workers.dev/code` directly. Benefits: the Worker hostname stays out of network traces, the call becomes same-origin (no CORS preflight), and you control the edge timeouts.
+
+The full nginx snippet (with the `resolver` + variable-in-`proxy_pass` pattern required for `workers.dev` dynamic IPs) is in [`spec/08-configuration.md` → "nginx reverse proxy"](spec/08-configuration.md#nginx-reverse-proxy-recommended).
+
+If you skip the proxy, change `CODE_URL` in the widget JS to the absolute Worker URL and verify the Worker's `GHOST_URL` secret matches your site origin exactly (used as `Access-Control-Allow-Origin`).
+
 ## API Reference
+
+### Member Endpoints
+
+#### `POST /code`
+
+Exchanges a Ghost-signed member JWT for a single-use 8-character linking code (10-min TTL). Called by the widget on the Ghost member page (see Setup step 8). Verifies the JWT against Ghost's published JWKS (`<GHOST_URL>/members/.well-known/jwks.json`) before issuing the code.
+
+```sh
+# Manual test (replace <jwt> with the value returned by /members/api/session in a logged-in session)
+curl -X POST https://<worker>.workers.dev/code \
+  -H "Content-Type: application/json" \
+  -d '{"token": "<jwt>"}'
+# → { "code": "G7K9MN2X", "expires_in": 600 }
+```
+
+CORS preflight is handled at `OPTIONS /code` and locked to the `GHOST_URL` origin.
 
 ### Webhook Endpoints
 

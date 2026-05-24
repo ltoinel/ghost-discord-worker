@@ -1,0 +1,194 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" role="img" aria-labelledby="title desc" preserveAspectRatio="xMidYMid meet">
+  <title id="title">Ghost → Discord Worker — Architecture</title>
+  <desc id="desc">A Cloudflare Worker bridges Ghost CMS membership events to Discord roles. Members prove email ownership via a JWT redeemed for a single-use code typed into Discord.</desc>
+
+  <defs>
+    <filter id="softShadow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="3"/>
+      <feOffset dx="0" dy="2" result="b"/>
+      <feComponentTransfer><feFuncA type="linear" slope="0.18"/></feComponentTransfer>
+      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+
+    <linearGradient id="workerGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff7ed"/>
+      <stop offset="1" stop-color="#fed7aa"/>
+    </linearGradient>
+    <linearGradient id="workerGradDark" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#431407"/>
+      <stop offset="1" stop-color="#7c2d12"/>
+    </linearGradient>
+
+    <marker id="arrowEnd" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/>
+    </marker>
+    <marker id="arrowStart" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/>
+    </marker>
+  </defs>
+
+  <style>
+    .actor      { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.5; }
+    .ghost      { fill: #f8fafc; stroke: #334155; stroke-width: 1.5; }
+    .discord    { fill: #eef2ff; stroke: #4f46e5; stroke-width: 1.5; }
+    .worker     { fill: url(#workerGrad); stroke: #f97316; stroke-width: 2.5; }
+    .kv         { fill: #fef3c7; stroke: #ca8a04; stroke-width: 1.5; }
+    .pill       { fill: #ffffff; opacity: 0.7; }
+    .title-l    { font-weight: 700; font-size: 17px; fill: #0f172a; }
+    .title-m    { font-weight: 700; font-size: 14px; fill: #0f172a; }
+    .sub        { font-size: 11px; fill: #475569; }
+    .code       { font-size: 11.5px; fill: #1e293b; font-weight: 600;
+                  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; }
+    .label      { font-size: 11px; fill: #334155; font-weight: 600; }
+    .label-bi   { font-size: 11px; fill: #334155; font-weight: 600; }
+    .arrow      { stroke: #64748b; stroke-width: 1.7; fill: none; }
+    .arrow-bi   { stroke: #64748b; stroke-width: 1.7; fill: none; }
+    .badge      { fill: #f97316; }
+    .badge-text { fill: #ffffff; font-size: 10.5px; font-weight: 700; }
+
+    @media (prefers-color-scheme: dark) {
+      .actor    { fill: #1e293b; stroke: #475569; }
+      .ghost    { fill: #1f2937; stroke: #94a3b8; }
+      .discord  { fill: #1e1b4b; stroke: #818cf8; }
+      .worker   { fill: url(#workerGradDark); stroke: #fb923c; }
+      .kv       { fill: #422006; stroke: #fbbf24; }
+      .pill     { fill: #0f172a; opacity: 0.55; }
+      .title-l, .title-m { fill: #f1f5f9; }
+      .sub      { fill: #cbd5e1; }
+      .code     { fill: #e2e8f0; }
+      .label, .label-bi { fill: #cbd5e1; }
+      .arrow, .arrow-bi { stroke: #94a3b8; }
+    }
+  </style>
+
+  <!-- ===== LEFT: actors that call the Worker ===== -->
+
+  <!-- Browser (Ghost page) -->
+  <g filter="url(#softShadow)">
+    <rect class="actor" x="40" y="50" width="220" height="84" rx="12"/>
+  </g>
+  <text class="title-m" x="150" y="78" text-anchor="middle">Browser</text>
+  <text class="sub" x="150" y="98" text-anchor="middle">Logged-in Ghost member,</text>
+  <text class="sub" x="150" y="114" text-anchor="middle">"Discord access" page</text>
+  <text class="code" x="150" y="130" text-anchor="middle">/members/api/session</text>
+
+  <!-- Ghost CMS (webhook source) -->
+  <g filter="url(#softShadow)">
+    <rect class="ghost" x="40" y="180" width="220" height="84" rx="12"/>
+  </g>
+  <text class="title-m" x="150" y="208" text-anchor="middle">Ghost CMS</text>
+  <text class="sub" x="150" y="228" text-anchor="middle">Webhook source</text>
+  <text class="code" x="150" y="246" text-anchor="middle">member.added · updated</text>
+  <text class="code" x="150" y="260" text-anchor="middle">member.deleted</text>
+
+  <!-- Discord User -->
+  <g filter="url(#softShadow)">
+    <rect class="discord" x="40" y="310" width="220" height="84" rx="12"/>
+  </g>
+  <text class="title-m" x="150" y="338" text-anchor="middle">Discord User</text>
+  <text class="sub" x="150" y="358" text-anchor="middle">Slash command interactions</text>
+  <text class="code" x="150" y="376" text-anchor="middle">/link &lt;code&gt;</text>
+  <text class="code" x="150" y="390" text-anchor="middle">/unlink</text>
+
+  <!-- ===== CENTER: Worker ===== -->
+
+  <g filter="url(#softShadow)">
+    <rect class="worker" x="310" y="50" width="340" height="344" rx="16"/>
+  </g>
+
+  <!-- CF badge -->
+  <rect class="badge" x="326" y="66" width="78" height="20" rx="10"/>
+  <text class="badge-text" x="365" y="80" text-anchor="middle">CLOUDFLARE</text>
+
+  <text class="title-l" x="480" y="84" text-anchor="middle">Worker</text>
+  <text class="sub" x="480" y="104" text-anchor="middle">ghost-discord-worker · TypeScript</text>
+
+  <!-- Endpoint pills -->
+  <rect class="pill" x="328" y="124" width="304" height="38" rx="8"/>
+  <text class="code" x="480" y="148" text-anchor="middle">POST /code            POST /discord</text>
+
+  <rect class="pill" x="328" y="170" width="304" height="38" rx="8"/>
+  <text class="code" x="480" y="194" text-anchor="middle">POST /webhook/{added,updated,deleted}</text>
+
+  <rect class="pill" x="328" y="216" width="304" height="38" rx="8"/>
+  <text class="code" x="480" y="240" text-anchor="middle">/link  (admin)    /link/:email</text>
+
+  <!-- Caption -->
+  <text class="sub" x="480" y="280" text-anchor="middle">Verifies HMAC · Ed25519 · RS256/384/512 JWT</text>
+  <text class="sub" x="480" y="298" text-anchor="middle">Mints single-use linking codes (10 min TTL)</text>
+  <text class="sub" x="480" y="316" text-anchor="middle">Maps Ghost ↔ Discord, syncs roles on events</text>
+
+  <!-- Tech micro-pills -->
+  <rect x="345" y="338" width="80" height="24" rx="12" fill="#fbbf24" opacity="0.18"/>
+  <text class="code" x="385" y="354" text-anchor="middle" fill="#92400e">Web Crypto</text>
+
+  <rect x="435" y="338" width="70" height="24" rx="12" fill="#a5f3fc" opacity="0.35"/>
+  <text class="code" x="470" y="354" text-anchor="middle" fill="#155e75">Wrangler</text>
+
+  <rect x="515" y="338" width="100" height="24" rx="12" fill="#bbf7d0" opacity="0.35"/>
+  <text class="code" x="565" y="354" text-anchor="middle" fill="#166534">100+ unit tests</text>
+
+  <!-- ===== RIGHT: external services called by the Worker ===== -->
+
+  <!-- Ghost CMS (JWKS + Admin API) -->
+  <g filter="url(#softShadow)">
+    <rect class="ghost" x="700" y="50" width="220" height="124" rx="12"/>
+  </g>
+  <text class="title-m" x="810" y="78" text-anchor="middle">Ghost CMS</text>
+  <text class="sub" x="810" y="98" text-anchor="middle">Identity + member data</text>
+  <text class="code" x="810" y="120" text-anchor="middle">/.well-known/jwks.json</text>
+  <text class="code" x="810" y="136" text-anchor="middle">/ghost/api/admin/members</text>
+  <text class="sub" x="810" y="158" text-anchor="middle">RS512 JWT signing key</text>
+
+  <!-- Discord Server -->
+  <g filter="url(#softShadow)">
+    <rect class="discord" x="700" y="220" width="220" height="124" rx="12"/>
+  </g>
+  <text class="title-m" x="810" y="248" text-anchor="middle">Discord Server</text>
+  <text class="sub" x="810" y="268" text-anchor="middle">Guild + roles</text>
+  <text class="code" x="810" y="290" text-anchor="middle">PUT  /members/.../roles/...</text>
+  <text class="code" x="810" y="306" text-anchor="middle">DELETE /members/.../roles/...</text>
+  <text class="sub" x="810" y="328" text-anchor="middle">Bot token + Manage Roles</text>
+
+  <!-- ===== BOTTOM: KV ===== -->
+
+  <g filter="url(#softShadow)">
+    <rect class="kv" x="310" y="430" width="340" height="92" rx="12"/>
+  </g>
+  <text class="title-m" x="480" y="456" text-anchor="middle">Cloudflare KV</text>
+  <text class="sub" x="480" y="474" text-anchor="middle">Bidirectional mapping + ephemeral codes</text>
+  <text class="code" x="480" y="494" text-anchor="middle">email → discord_user_id     ·     discord:user_id → email</text>
+  <text class="code" x="480" y="510" text-anchor="middle">code:CODE → email   (TTL 10 min, single-use)</text>
+
+  <!-- ===== ARROWS — inbound (left → worker) ===== -->
+
+  <!-- Browser → Worker  (JWT) -->
+  <path class="arrow" d="M 260 92 L 310 92" marker-end="url(#arrowEnd)"/>
+  <text class="label" x="285" y="84" text-anchor="middle">JWT</text>
+
+  <!-- Ghost webhook → Worker  (HMAC) -->
+  <path class="arrow" d="M 260 222 L 310 222" marker-end="url(#arrowEnd)"/>
+  <text class="label" x="285" y="214" text-anchor="middle">HMAC</text>
+
+  <!-- Discord User → Worker  (Ed25519) -->
+  <path class="arrow" d="M 260 352 L 310 352" marker-end="url(#arrowEnd)"/>
+  <text class="label" x="285" y="344" text-anchor="middle">Ed25519</text>
+
+  <!-- ===== ARROWS — outbound (worker → right) ===== -->
+
+  <!-- Worker → Ghost CMS (out) -->
+  <path class="arrow" d="M 650 112 L 700 112" marker-end="url(#arrowEnd)"/>
+  <text class="label" x="675" y="104" text-anchor="middle">HTTPS</text>
+
+  <!-- Worker → Discord Server -->
+  <path class="arrow" d="M 650 282 L 700 282" marker-end="url(#arrowEnd)"/>
+  <text class="label" x="675" y="274" text-anchor="middle">Bot</text>
+
+  <!-- ===== ARROW — worker ↕ KV ===== -->
+
+  <path class="arrow-bi"
+        d="M 480 394 L 480 430"
+        marker-start="url(#arrowStart)"
+        marker-end="url(#arrowEnd)"/>
+  <text class="label-bi" x="494" y="416" text-anchor="start">read / write</text>
+</svg>
