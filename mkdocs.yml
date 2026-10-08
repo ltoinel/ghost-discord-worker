@@ -80,7 +80,9 @@ markdown_extensions:
       line_spans: __span
       pygments_lang_class: true
   - pymdownx.inlinehilite
-  - pymdownx.snippets
+  - pymdownx.snippets:
+      base_path: [snippets]
+      check_paths: true
   - pymdownx.superfences:
       custom_fences:
         - name: mermaid
@@ -96,8 +98,15 @@ markdown_extensions:
 
 nav:
   - Home: index.md
-  - Getting started: getting-started.md
-  - Discord setup: discord-setup.md
+  - Installation:
+      - setup/index.md
+      - 1. Prepare Discord: setup/1-discord.md
+      - 2. Deploy the Worker: setup/2-deploy.md
+      - 3. Connect Discord: setup/3-connect-discord.md
+      - 4. Ghost webhooks: setup/4-ghost-webhooks.md
+      - 5. Ghost linking page: setup/5-ghost-widget.md
+      - 6. Test & go live: setup/6-test.md
+  - Operations: operations.md
   - Development: development.md
   - Specification:
       - spec/index.md

@@ -15,8 +15,7 @@ Your Ghost members link their Discord account in one click, and keep the right r
 <strong>Membre</strong> for everyone, <strong>Membre Premium</strong> for paid and comped members.
 </p>
 
-[Get started :material-rocket-launch:](getting-started.md){ .md-button .md-button--primary }
-[Discord setup :fontawesome-brands-discord:](discord-setup.md){ .md-button }
+[Install in 6 steps :material-rocket-launch:](setup/index.md){ .md-button .md-button--primary }
 [Read the spec :material-book-open-variant:](spec/index.md){ .md-button }
 
 </div>
@@ -45,7 +44,7 @@ Your Ghost members link their Discord account in one click, and keep the right r
 
     One Cloudflare Worker plus one KV namespace. Fits comfortably in the free tier, deploys with a single `./deploy.sh`.
 
-    [:octicons-arrow-right-24: Getting started](getting-started.md)
+    [:octicons-arrow-right-24: Installation guide](setup/index.md)
 
 -   :material-check-decagram:{ .lg .middle } __Audited by CI__
 

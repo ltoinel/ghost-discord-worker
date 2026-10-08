@@ -23,7 +23,8 @@ A Cloudflare Worker that keeps Discord roles in sync with Ghost CMS memberships.
 
 **The full guide lives on GitHub Pages: [ltoinel.github.io/ghost-discord-worker](https://ltoinel.github.io/ghost-discord-worker/)**
 
-- [Getting started](https://ltoinel.github.io/ghost-discord-worker/getting-started/): deploy, configure Ghost and Discord, add the linking page
+- [Installation guide](https://ltoinel.github.io/ghost-discord-worker/setup/): 6 steps, from the Discord bot to the linking page on your Ghost site
+- [Operations](https://ltoinel.github.io/ghost-discord-worker/operations/): logs, manual linking, upgrading, secret rotation
 - [Development](https://ltoinel.github.io/ghost-discord-worker/development/): local server, tests, CI and security checks
 - [Specification](https://ltoinel.github.io/ghost-discord-worker/spec/): architecture, API, authentication, security model
 
@@ -41,7 +42,7 @@ npx wrangler login
 ./deploy.sh --secrets .env.prod --register-commands
 ```
 
-See [Getting started](https://ltoinel.github.io/ghost-discord-worker/getting-started/) for the secrets file and the Ghost and Discord setup.
+Then point Discord to the Worker, add the Ghost webhooks and publish the linking page: the [installation guide](https://ltoinel.github.io/ghost-discord-worker/setup/) walks through each step.
 
 ## Credits
 

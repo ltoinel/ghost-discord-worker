@@ -10,7 +10,7 @@
 - `npm test` — Run unit tests (Vitest, plain Node — requires Node ≥ 20 for Ed25519 in Web Crypto)
 - `npm run test:coverage` — Tests with v8 coverage; fails under 90% (thresholds in `vitest.config.mts`)
 - `npm run test:watch` — Vitest watch mode
-- `mkdocs serve` — Preview the docs site (`pip install -r requirements-docs.txt`); specs live in `docs/spec/`, published to GitHub Pages by `.github/workflows/docs.yml`
+- `mkdocs serve` — Preview the docs site (`pip install -r requirements-docs.txt`); specs live in `docs/spec/`, the install guide in `docs/setup/`, and the widget + nginx block in `snippets/` (included in the docs via `pymdownx.snippets`, edit them there), published to GitHub Pages by `.github/workflows/docs.yml`
 
 Git hooks (`.githooks/`, enabled by `npm ci` via `prepare`): pre-commit refuses commits on `main` and runs lint, type-check, ShellCheck, gitleaks; pre-push refuses pushes to `main` and runs `test:coverage`. Never commit on `main`: always work on a branch.
 
