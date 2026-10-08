@@ -1,5 +1,15 @@
 # Step 3 · Connect Discord to the Worker
 
+<nav class="gd-stepper" aria-label="Installation progress">
+  <a href="../1-discord/" class="done"><b>Step 1</b>Prepare Discord</a>
+  <a href="../2-deploy/" class="done"><b>Step 2</b>Deploy the Worker</a>
+  <a href="../3-connect-discord/" class="current" aria-current="step"><b>Step 3</b>Connect Discord</a>
+  <a href="../4-ghost-webhooks/" class=""><b>Step 4</b>Ghost webhooks</a>
+  <a href="../5-ghost-widget/" class=""><b>Step 5</b>Deploy the widget on Ghost</a>
+  <a href="../6-test/" class=""><b>Step 6</b>Test &amp; go live</a>
+</nav>
+
+
 !!! abstract ""
     **You need:** the Worker URL from [step 2](2-deploy.md) · **You get:** `/link` and `/unlink` working in your server · **Time:** 5 min
 

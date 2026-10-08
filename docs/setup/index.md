@@ -8,7 +8,7 @@ Six steps, in this order. Each step lists what you need, what to do, and how to 
 | [2. Deploy the Worker](2-deploy.md) | Fill in the secrets file, run `./deploy.sh` | Terminal | 10 min |
 | [3. Connect Discord](3-connect-discord.md) | Point Discord to the Worker, check the slash commands | Discord | 5 min |
 | [4. Configure Ghost webhooks](4-ghost-webhooks.md) | Tell Ghost to notify the Worker of member changes | Ghost Admin | 5 min |
-| [5. Add the linking page](5-ghost-widget.md) | Publish the "Get my Discord code" widget on your site | Ghost Admin (+ nginx) | 10 min |
+| [5. Deploy the widget on Ghost](5-ghost-widget.md) | Paste the "Get my Discord code" widget into a Ghost page and publish it | Ghost Admin (+ nginx) | 10 min |
 | [6. Test & go live](6-test.md) | Run the full member flow, then announce it | Ghost + Discord | 5 min |
 
 ## Before you start

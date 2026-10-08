@@ -1,5 +1,15 @@
 # Step 6 · Test & go live
 
+<nav class="gd-stepper" aria-label="Installation progress">
+  <a href="../1-discord/" class="done"><b>Step 1</b>Prepare Discord</a>
+  <a href="../2-deploy/" class="done"><b>Step 2</b>Deploy the Worker</a>
+  <a href="../3-connect-discord/" class="done"><b>Step 3</b>Connect Discord</a>
+  <a href="../4-ghost-webhooks/" class="done"><b>Step 4</b>Ghost webhooks</a>
+  <a href="../5-ghost-widget/" class="done"><b>Step 5</b>Deploy the widget on Ghost</a>
+  <a href="../6-test/" class="current" aria-current="step"><b>Step 6</b>Test &amp; go live</a>
+</nav>
+
+
 !!! abstract ""
     **You need:** a test member account on your site and a Discord account in your server · **You get:** a verified installation · **Time:** 5 min
 
@@ -38,7 +48,7 @@ A message you can adapt for your newsletter or a post:
 | `/link` and `/unlink` do not show up | Commands not registered, or bot installed without `applications.commands` | [Step 3.2](3-connect-discord.md#32-check-the-slash-commands) |
 | *"Please sign in…"* while signed in | Ghost session not sent: the widget is on another domain than Ghost | Host the page on your Ghost site itself |
 | *"Unable to retrieve your membership details"* | Ghost too old: no `/members/api/entitlements` | Update Ghost to a recent 6.x |
-| *"Expected an entitlement token…"* | Old widget still calling `/members/api/session` | Replace it with the [current widget](5-ghost-widget.md#53-widget-code) |
+| *"Expected an entitlement token…"* | Old widget still calling `/members/api/session` | Replace it with the [current widget](5-ghost-widget.md#52-copy-the-widget-code) |
 | *"Invalid token"* | `GHOST_URL` does not match the site origin (`www`, trailing slash, `http`) | Fix the secret: `npx wrangler secret put GHOST_URL` |
 | Network error on the page | Wrong `CODE_URL`, nginx block missing, or CORS origin mismatch | [Step 5.1](5-ghost-widget.md#51-choose-how-the-widget-reaches-the-worker) |
 | `502` on `/code` after a few hours | nginx block without `resolver` | Use the exact block from [step 5.1](5-ghost-widget.md#51-choose-how-the-widget-reaches-the-worker) |

@@ -104,19 +104,14 @@ nav:
       - 2. Deploy the Worker: setup/2-deploy.md
       - 3. Connect Discord: setup/3-connect-discord.md
       - 4. Ghost webhooks: setup/4-ghost-webhooks.md
-      - 5. Ghost linking page: setup/5-ghost-widget.md
+      - 5. Deploy the widget on Ghost: setup/5-ghost-widget.md
       - 6. Test & go live: setup/6-test.md
   - Operations: operations.md
   - Development: development.md
   - Specification:
       - spec/index.md
-      - Overview: spec/01-overview.md
-      - Architecture: spec/02-architecture.md
-      - Data Model: spec/03-data-model.md
-      - API Reference: spec/04-api-reference.md
-      - Authentication: spec/05-authentication.md
-      - Event Handling: spec/06-event-handling.md
-      - Slash Commands: spec/07-slash-commands.md
-      - Configuration: spec/08-configuration.md
-      - Security: spec/09-security.md
-      - Error Handling: spec/10-error-handling.md
+      - Flows: spec/flows.md
+      - API reference: spec/api.md
+      - Data model: spec/data-model.md
+      - Security: spec/security.md
+      - Configuration: spec/configuration.md

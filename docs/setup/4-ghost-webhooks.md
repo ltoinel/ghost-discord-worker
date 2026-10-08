@@ -1,5 +1,15 @@
 # Step 4 · Configure Ghost webhooks
 
+<nav class="gd-stepper" aria-label="Installation progress">
+  <a href="../1-discord/" class="done"><b>Step 1</b>Prepare Discord</a>
+  <a href="../2-deploy/" class="done"><b>Step 2</b>Deploy the Worker</a>
+  <a href="../3-connect-discord/" class="done"><b>Step 3</b>Connect Discord</a>
+  <a href="../4-ghost-webhooks/" class="current" aria-current="step"><b>Step 4</b>Ghost webhooks</a>
+  <a href="../5-ghost-widget/" class=""><b>Step 5</b>Deploy the widget on Ghost</a>
+  <a href="../6-test/" class=""><b>Step 6</b>Test &amp; go live</a>
+</nav>
+
+
 !!! abstract ""
     **You need:** the Worker URL and `WEBHOOK_SECRET` from [step 2](2-deploy.md) · **You get:** roles that follow subscription changes · **Time:** 5 min
 
@@ -35,4 +45,4 @@ Then, in Ghost Admin, edit any member (change their name and save).
 - [ ] The log shows `POST /webhook/updated` with **Ok**, and a line *"No Discord mapping found for email: …"*. That is the expected result: the signature is valid, the member just is not linked yet.
 - [ ] If you see **401 Unauthorized** instead, the webhook **Secret** in Ghost differs from `WEBHOOK_SECRET`.
 
-[Next: Add the linking page :material-arrow-right:](5-ghost-widget.md){ .md-button .md-button--primary }
+[Next: Deploy the widget on Ghost :material-arrow-right:](5-ghost-widget.md){ .md-button .md-button--primary }
