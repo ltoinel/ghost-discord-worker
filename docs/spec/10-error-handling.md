@@ -143,7 +143,8 @@ There is **no structured logging** (JSON) and **no correlation ID**. Adding eith
 | `POST /code` returns 429 | Optional `CODE_RATE_LIMITER` limit reached for this member | Wait a minute; raise `limit` in `[[ratelimits]]` if legitimate traffic hits it |
 | `/unlink` says roles could not be removed, or admin `DELETE /link` returns 502 | Bot role below the managed roles, **Manage Roles** missing, or Discord outage | Fix the role hierarchy, then retry; the mapping was kept on purpose |
 | `POST /code` returns 401 `Expected an entitlement token…` | Widget fetches `/members/api/session` instead of `/members/api/entitlements`, or Ghost is too old to expose entitlements | Update the widget snippet ([08 — Configuration](./08-configuration.md)); upgrade to a recent Ghost 6.x |
-| User was paid but got no Premium role on `/link` (or vice versa) | Tier changed between minting and redeeming the code (status is a snapshot taken at mint time) | Re-trigger a Ghost member update, or fix the role manually in Discord |
+| User was paid but got no Premium role on `/link` (or vice versa) | Tier changed between minting and redeeming, and Ghost's webhook arrived after the `/link` (a status change normally invalidates the pending code) | Re-trigger a Ghost member update, or fix the role manually in Discord |
+| *"Invalid or expired code"* right after a plan change | Expected: a status change or deletion invalidates the pending code | Generate a new code |
 | `/link` says "Invalid or expired code" immediately after minting | Code TTL elapsed (>10 min between page load and Discord redemption), or KV write hadn't propagated | Mint a new code; KV is eventually consistent across regions |
 | Discord interactions return 401 | `DISCORD_PUBLIC_KEY` is wrong/outdated | Copy from Discord Developer Portal → `wrangler secret put` |
 | Role mutations log 403 | Bot role is below managed roles in hierarchy | Move bot role above `Member` / `Premium Member` in Discord server settings |

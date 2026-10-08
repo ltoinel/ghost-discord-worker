@@ -55,12 +55,28 @@ async function verifyGhostSignature(request: Request, env: Env): Promise<string 
 	return body;
 }
 
+type WebhookEvent = "added" | "updated" | "deleted";
+
+/**
+ * Deletes the member's pending linking code, if any. A code carries the `paid` flag captured
+ * when it was minted; once the status changes (or the member is deleted), redeeming it would
+ * grant roles the member no longer has, e.g. Premium regained right after cancelling.
+ */
+async function invalidatePendingCode(env: Env, email: string): Promise<void> {
+	const code = await env.GHOST_DISCORD_MAPPING.get(`pending:${email}`);
+	if (!code) return;
+	await env.GHOST_DISCORD_MAPPING.delete(`code:${code}`);
+	await env.GHOST_DISCORD_MAPPING.delete(`pending:${email}`);
+	console.log(`pending code invalidated for ${email}`);
+}
+
 /**
  * Authenticates the webhook signature, parses the JSON payload, and resolves the Discord user mapping.
  * For delete events, the email is in member.previous (member.current is empty).
+ * Status changes and deletions invalidate the member's pending code, linked or not.
  * @returns A WebhookContext on success, or an error Response on failure (auth, parse, or missing mapping).
  */
-async function parseWebhookRequest(request: Request, env: Env, deleted = false): Promise<WebhookContext | Response> {
+async function parseWebhookRequest(request: Request, env: Env, event: WebhookEvent): Promise<WebhookContext | Response> {
 	const body = await verifyGhostSignature(request, env);
 	if (body === null) {
 		return json({ error: "Unauthorized" }, 401);
@@ -74,12 +90,19 @@ async function parseWebhookRequest(request: Request, env: Env, deleted = false):
 	}
 
 	const { member } = payload;
-	const source = deleted ? member?.previous : member?.current;
+	const source = event === "deleted" ? member?.previous : member?.current;
 	if (!source?.email) {
 		return json({ error: "Invalid payload: missing member email" }, 400);
 	}
 
 	const email = source.email.toLowerCase();
+
+	const statusChanged =
+		event === "updated" && member.previous?.status !== undefined && member.previous.status !== member.current?.status;
+	if (event === "deleted" || statusChanged) {
+		await invalidatePendingCode(env, email);
+	}
+
 	const discordUserId = await env.GHOST_DISCORD_MAPPING.get(email);
 	if (!discordUserId) {
 		console.warn(`No Discord mapping found for email: ${email}`);
@@ -94,7 +117,7 @@ async function parseWebhookRequest(request: Request, env: Env, deleted = false):
  * Assigns the Member role, plus Premium if the new member is paid or comped.
  */
 export async function handleMemberAdded(request: Request, env: Env): Promise<Response> {
-	const result = await parseWebhookRequest(request, env);
+	const result = await parseWebhookRequest(request, env, "added");
 	if (result instanceof Response) return result;
 
 	const { email, discordUserId, member } = result;
@@ -112,7 +135,7 @@ export async function handleMemberAdded(request: Request, env: Env): Promise<Res
  * Syncs the Premium role on status transitions; paid↔comped and same-status updates are no-ops.
  */
 export async function handleMemberUpdated(request: Request, env: Env): Promise<Response> {
-	const result = await parseWebhookRequest(request, env);
+	const result = await parseWebhookRequest(request, env, "updated");
 	if (result instanceof Response) return result;
 
 	const { email, discordUserId, member } = result;
@@ -138,7 +161,7 @@ export async function handleMemberUpdated(request: Request, env: Env): Promise<R
  * The KV mapping itself is preserved so re-subscriptions reuse the existing link.
  */
 export async function handleMemberDeleted(request: Request, env: Env): Promise<Response> {
-	const result = await parseWebhookRequest(request, env, true);
+	const result = await parseWebhookRequest(request, env, "deleted");
 	if (result instanceof Response) return result;
 
 	const { email, discordUserId } = result;

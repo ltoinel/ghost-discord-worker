@@ -96,7 +96,9 @@ Trade-off:
 
 - The status used at `/link` time is a **snapshot** up to 10 minutes old (code TTL).
 - Once the mapping exists, later status changes are handled by the `member.updated` / `member.deleted` webhooks as usual.
-- A status change (upgrade, downgrade, cancellation, deletion) that happens **between minting and redeeming** the code is **not** re-checked — the previous Admin API lookup used to cover that window. Webhooks fired in that window find no mapping yet and are skipped. Worst case: a member who downgraded in those ≤ 10 minutes keeps the Premium role until the next tier change or manual correction (and, symmetrically, an upgrade in that window is not reflected until the next update).
+- A status change (upgrade, downgrade, cancellation) or a deletion **invalidates the member's pending code**: the `member.updated` (status changed) and `member.deleted` webhooks delete `pending:<email>` and the `code:<CODE>` it points to, whether or not the member is linked yet. The member simply requests a new code, which carries the new status.
+- Without this, a paid member could mint a code, cancel, then redeem the old `paid: true` code (the idempotent re-link path accepts it) and regain Premium indefinitely; a deleted member could also recover their roles the same way.
+- Remaining window: the webhook and the redemption race only if Ghost's webhook is delayed past the `/link`; the role is then corrected by the next status change.
 
 The admin `POST /link` endpoint does not consult Ghost at all (trusted caller) and assigns no roles. Admin `DELETE /link` removes the roles (see [Role revocation on unlink](#role-revocation-on-unlink)).
 
