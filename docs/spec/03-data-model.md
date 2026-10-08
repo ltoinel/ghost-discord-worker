@@ -18,7 +18,7 @@ A single KV namespace, `GHOST_DISCORD_MAPPING`, stores all worker state. Keys ar
 - Admin `POST /link` also deletes stale reverse entries: the old `discord:<previous_user_id>` key if the email was linked to another Discord user, and the old `<previous_email>` key if the Discord user was linked to another email.
 - Reverse keys are namespaced with the literal prefix `discord:`; code keys with `code:`; code pointers with `pending:`. Validated emails never contain `:` (`isValidEmail` does not allow it), while every other key carries a `prefix:`, so the spaces are disjoint.
 - Code keys have `expirationTtl: 600` (10 minutes) at write time. They are also explicitly deleted on successful `/link` redemption (single-use) — **before** the mapping is written.
-- `pending:<email>` keys are written alongside the code with the same 600 s TTL; their `expiresAt` metadata lets `POST /code` compute the code's remaining lifetime without another write. They are not deleted on redemption: a pointer to an already-redeemed code is ignored because `code:<CODE>` no longer exists.
+- `pending:<email>` keys are written alongside the code with the same 600 s TTL; their `expiresAt` metadata lets `POST /code` compute the code's remaining lifetime without another write. They are not deleted on redemption: a pointer to an already-redeemed code is ignored because `code:<CODE>` no longer exists. They are deleted, together with their `code:<CODE>`, when a `member.updated` webhook changes the member's status or a `member.deleted` webhook arrives (see [09 — Security](./09-security.md#tier-status-freshness-entitlement-snapshot)).
 - A code value that is not valid `PendingLink` JSON (e.g. a legacy bare-email value) is treated as "Invalid or expired code".
 
 ### Examples

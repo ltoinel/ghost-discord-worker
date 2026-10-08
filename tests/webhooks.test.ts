@@ -294,3 +294,54 @@ describe("handleMemberDeleted", () => {
 		expect(fetchSpy).not.toHaveBeenCalled();
 	});
 });
+
+describe("pending code invalidation", () => {
+	let env: Env;
+	let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+	beforeEach(async () => {
+		env = createEnv();
+		fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(null, { status: 204 }));
+		await env.GHOST_DISCORD_MAPPING.put("code:OLDPAID1", JSON.stringify({ email: "a@b.co", paid: true }));
+		await env.GHOST_DISCORD_MAPPING.put("pending:a@b.co", "OLDPAID1");
+	});
+
+	afterEach(() => {
+		fetchSpy.mockRestore();
+	});
+
+	const send = async (url: string, member: object) => {
+		const handler = url === URL_DELETED ? handleMemberDeleted : handleMemberUpdated;
+		const body = JSON.stringify({ member });
+		return handler(await signedGhostWebhook(url, body, env.WEBHOOK_SECRET), env);
+	};
+
+	it("drops the code when the status changes, even for an unlinked member", async () => {
+		await send(URL_UPDATED, { current: { email: "a@b.co", status: "free" }, previous: { status: "paid" } });
+		expect(await env.GHOST_DISCORD_MAPPING.get("code:OLDPAID1")).toBeNull();
+		expect(await env.GHOST_DISCORD_MAPPING.get("pending:a@b.co")).toBeNull();
+	});
+
+	it("drops the code when the member is deleted", async () => {
+		await send(URL_DELETED, { current: {}, previous: { email: "a@b.co", status: "paid" } });
+		expect(await env.GHOST_DISCORD_MAPPING.get("code:OLDPAID1")).toBeNull();
+	});
+
+	it("keeps the code when the update does not change the status", async () => {
+		await send(URL_UPDATED, { current: { email: "a@b.co", status: "paid", name: "New" }, previous: { name: "Old" } });
+		expect(await env.GHOST_DISCORD_MAPPING.get("code:OLDPAID1")).not.toBeNull();
+	});
+
+	it("a cancelled member cannot regain Premium with a code minted before cancelling", async () => {
+		await env.GHOST_DISCORD_MAPPING.put("a@b.co", "u1");
+		await env.GHOST_DISCORD_MAPPING.put("discord:u1", "a@b.co");
+		await send(URL_UPDATED, { current: { email: "a@b.co", status: "free" }, previous: { status: "paid" } });
+
+		// The old code is gone, so /link <OLDPAID1> fails its lookup and grants nothing.
+		expect(await env.GHOST_DISCORD_MAPPING.get("code:OLDPAID1")).toBeNull();
+		const premiumCalls = fetchSpy.mock.calls
+			.filter((c) => String(c[0]).endsWith(`/roles/${env.DISCORD_ROLE_PREMIUM}`))
+			.map((c) => (c[1] as RequestInit).method);
+		expect(premiumCalls).toEqual(["DELETE"]);
+	});
+});

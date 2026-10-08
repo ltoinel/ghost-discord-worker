@@ -50,7 +50,9 @@ if (!isPaid(previous.status) && isPaid(current.status)) {
 
 ### Why no `removeRole(M)` on updates?
 
-The Member role is added on `member.added` and removed on `member.deleted`. It represents "is currently a Ghost member" — tier changes don't affect membership existence.
+The Member role is added on `member.added` and removed on `member.deleted`.
+
+Before the mapping lookup, a `member.updated` whose `status` changed and any `member.deleted` delete the member's pending linking code (`pending:<email>` and its `code:<CODE>`), so a code minted under the old status cannot be redeemed afterwards. This happens even when the member is not linked. It represents "is currently a Ghost member" — tier changes don't affect membership existence.
 
 ### `isPaid()` definition
 
