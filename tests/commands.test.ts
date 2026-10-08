@@ -28,6 +28,9 @@ beforeAll(async () => {
 	publicKeyHex = bytesToHex(raw);
 });
 
+/** True when a mocked fetch call targets the Discord API (exact origin, not a substring match). */
+const isDiscordApi = (url: unknown) => new URL(String(url)).origin === "https://discord.com";
+
 /** KV value written by POST /code. */
 const pending = (email: string, paid = false) => JSON.stringify({ email, paid });
 
@@ -190,7 +193,7 @@ describe("handleDiscordInteraction", () => {
 			expect(await env.GHOST_DISCORD_MAPPING.get("code:ABC12345")).toBeNull();
 
 			const discordCalls = fetchSpy.mock.calls.filter((c) =>
-				String(c[0]).includes("discord.com"),
+				isDiscordApi(c[0]),
 			);
 			expect(discordCalls).toHaveLength(2);
 		});
@@ -207,7 +210,7 @@ describe("handleDiscordInteraction", () => {
 			await handleDiscordInteraction(req, env);
 
 			const discordCalls = fetchSpy.mock.calls.filter((c) =>
-				String(c[0]).includes("discord.com"),
+				isDiscordApi(c[0]),
 			);
 			expect(discordCalls).toHaveLength(1);
 			expect(String(discordCalls[0][0])).toContain(
@@ -321,7 +324,7 @@ describe("handleDiscordInteraction", () => {
 			});
 			await handleDiscordInteraction(req, env);
 			const urls = fetchSpy.mock.calls.map((c) => String(c[0]));
-			expect(urls.every((u) => u.includes("discord.com"))).toBe(true);
+			expect(urls.every(isDiscordApi)).toBe(true);
 		});
 
 		it("warns when role assignment fails", async () => {
