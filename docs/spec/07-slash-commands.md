@@ -29,14 +29,15 @@ Slash commands must be registered with the Discord API for the application (not 
 
 ## `/link <code>`
 
-The Discord user does **not** type their email here. They first visit the Ghost site (logged in), click "Get my Discord code", and the page calls `POST /code` with their Ghost member JWT. The Worker mints an 8-character code which the user then pastes into Discord. See [05 — Authentication](./05-authentication.md) for the JWT proof-of-ownership flow.
+The Discord user does **not** type their email here. They first visit the Ghost site (logged in), click "Get my Discord code", and the page fetches their entitlement JWT from `/members/api/entitlements` and calls `POST /code` with it. The Worker mints an 8-character code (stored with the member's email and `paid` flag) which the user then pastes into Discord. See [05 — Authentication](./05-authentication.md) for the JWT proof-of-ownership flow.
 
 ### Flow
 
 ```
 1. Read code from interaction.data.options[0].value, trim + uppercase.
-2. KV lookup: email = KV.get("code:" + code).
-   If missing/expired → "Invalid or expired code. Visit your Ghost site to generate a new one."
+2. KV lookup: { email, paid } = JSON.parse(KV.get("code:" + code)).
+   If missing/expired, or not a valid { email: string, paid: boolean } value (e.g. a legacy bare-email value)
+   → "Invalid or expired code. Visit your Ghost site to generate a new one."
 
 3. Conflict check — email side:
    existingUserId = KV.get(email)
@@ -49,26 +50,20 @@ The Discord user does **not** type their email here. They first visit the Ghost 
        → "Your Discord account is already linked to **<existingEmail>**.
           Use `/unlink` first."
 
-5. Fetch current Ghost membership status (for premium role assignment):
-   ghostResult = getGhostMember(email)
-   - On status "error"     → "An error occurred while verifying your membership: <msg>"
-   - On status "not_found" → "This email is no longer associated with any Ghost membership."
-   - On status "found"     → proceed.
-
-6. Write the bidirectional mapping + invalidate the code:
+5. Write the bidirectional mapping + invalidate the code:
        KV.put(email, invokingUserId)
        KV.put("discord:" + invokingUserId, email)
        KV.delete("code:" + code)         // one-time use
 
-7. Assign Discord roles:
+6. Assign Discord roles (no Ghost API call — `paid` was captured from the entitlement JWT at mint time):
        addRole(DISCORD_ROLE_MEMBER)
-       if (isPaid(member.status)) addRole(DISCORD_ROLE_PREMIUM)
+       if (paid) addRole(DISCORD_ROLE_PREMIUM)
 
-8. If any role call failed → log errors server-side and reply:
+7. If any role call failed → log errors server-side and reply:
        "Your email **<email>** has been linked, but roles could not be
         assigned. Please contact an administrator."
 
-9. Otherwise reply: "Your email **<email>** has been linked to your Discord account."
+8. Otherwise reply: "Your email **<email>** has been linked to your Discord account."
 ```
 
 ### Conflict Semantics
@@ -82,18 +77,16 @@ Re-linking the same `(email, userId)` pair is **idempotent** — both conflict c
 
 ### Why a code, not the email?
 
-The previous design (`/link <email>`) let any Discord user claim any Ghost email they could guess, provided the legitimate owner hadn't linked yet. The code redemption flow closes that gap: only someone who can mint a Ghost member JWT (i.e., who controls the Ghost session for that email) can produce a valid code. See [09 — Security](./09-security.md) for the full threat analysis.
+The previous design (`/link <email>`) let any Discord user claim any Ghost email they could guess, provided the legitimate owner hadn't linked yet. The code redemption flow closes that gap: only someone who can obtain a Ghost member entitlement JWT (i.e., who controls the Ghost session for that email) can produce a valid code. See [09 — Security](./09-security.md) for the full threat analysis.
 
 ### Replies — all messages
 
 | Condition | Reply text |
 |-----------|------------|
 | Missing code | `"Please provide your linking code. Visit your Ghost site to generate one."` |
-| Code not in KV (invalid, expired, or already used) | `"Invalid or expired code. Visit your Ghost site to generate a new one."` |
+| Code not in KV (invalid, expired, or already used) or malformed code value | `"Invalid or expired code. Visit your Ghost site to generate a new one."` |
 | Email taken by another Discord user | `"This email is already linked to another Discord account."` |
 | Discord user already linked elsewhere | ``"Your Discord account is already linked to **<email>**. Use `/unlink` first."`` |
-| Ghost API error during status lookup | `"An error occurred while verifying your membership: <message>"` |
-| Email no longer a Ghost member (cancelled between code mint and redemption) | `"This email is no longer associated with any Ghost membership."` |
 | Linked but role assignment failed | `"Your email **<email>** has been linked, but roles could not be assigned. Please contact an administrator."` |
 | Success | `"Your email **<email>** has been linked to your Discord account."` |
 
@@ -148,4 +141,4 @@ All slash command replies use the Discord Interaction Response shape:
 - `type: 4` = `CHANNEL_MESSAGE_WITH_SOURCE`
 - `flags: 64` = `EPHEMERAL` (visible only to invoking user, suppresses notifications)
 
-Discord's 3-second deadline for an initial interaction response is the operative SLO. The `/link` command performs three KV reads, two KV writes, one KV delete, one Ghost API call, and up to two Discord API calls — all serial. Under healthy conditions this stays well within the deadline.
+Discord's 3-second deadline for an initial interaction response is the operative SLO. The `/link` command performs three KV reads, two KV writes, one KV delete, and up to two Discord API calls (no Ghost API call) — all serial. Under healthy conditions this stays well within the deadline.

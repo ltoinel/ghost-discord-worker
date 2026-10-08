@@ -70,7 +70,7 @@
   <text class="title-m" x="150" y="78" text-anchor="middle">Browser</text>
   <text class="sub" x="150" y="98" text-anchor="middle">Logged-in Ghost member,</text>
   <text class="sub" x="150" y="114" text-anchor="middle">"Discord access" page</text>
-  <text class="code" x="150" y="130" text-anchor="middle">/members/api/session</text>
+  <text class="code" x="150" y="130" text-anchor="middle">/members/api/entitlements</text>
 
   <!-- Ghost CMS (webhook source) -->
   <g filter="url(#softShadow)">
@@ -130,14 +130,13 @@
 
   <!-- ===== RIGHT: external services called by the Worker ===== -->
 
-  <!-- Ghost CMS (JWKS + Admin API) -->
+  <!-- Ghost CMS (JWKS) -->
   <g filter="url(#softShadow)">
     <rect class="ghost" x="700" y="50" width="220" height="124" rx="12"/>
   </g>
   <text class="title-m" x="810" y="78" text-anchor="middle">Ghost CMS</text>
-  <text class="sub" x="810" y="98" text-anchor="middle">Identity + member data</text>
-  <text class="code" x="810" y="120" text-anchor="middle">/.well-known/jwks.json</text>
-  <text class="code" x="810" y="136" text-anchor="middle">/ghost/api/admin/members</text>
+  <text class="sub" x="810" y="98" text-anchor="middle">Member token verification</text>
+  <text class="code" x="810" y="128" text-anchor="middle">/members/.well-known/jwks.json</text>
   <text class="sub" x="810" y="158" text-anchor="middle">RS512 JWT signing key</text>
 
   <!-- Discord Server -->
@@ -157,12 +156,12 @@
   </g>
   <text class="title-m" x="480" y="456" text-anchor="middle">Cloudflare KV</text>
   <text class="sub" x="480" y="474" text-anchor="middle">Bidirectional mapping + ephemeral codes</text>
-  <text class="code" x="480" y="494" text-anchor="middle">email → discord_user_id     ·     discord:user_id → email</text>
-  <text class="code" x="480" y="510" text-anchor="middle">code:CODE → email   (TTL 10 min, single-use)</text>
+  <text class="code" x="480" y="494" text-anchor="middle">email ↔ discord:user_id</text>
+  <text class="code" x="480" y="510" text-anchor="middle">code:CODE → {email, paid} · 10 min, single-use</text>
 
   <!-- ===== ARROWS — inbound (left → worker) ===== -->
 
-  <!-- Browser → Worker  (JWT) -->
+  <!-- Browser → Worker  (entitlement JWT) -->
   <path class="arrow" d="M 260 92 L 310 92" marker-end="url(#arrowEnd)"/>
   <text class="label" x="285" y="84" text-anchor="middle">JWT</text>
 

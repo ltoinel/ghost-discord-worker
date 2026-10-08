@@ -6,11 +6,11 @@ All endpoints return JSON. All responses have `Content-Type: application/json`. 
 
 ## `POST /code`
 
-Exchanges a Ghost-signed member JWT (proof of email ownership) for a short-lived, single-use redemption code. Called from the Ghost site's browser JS — recommended via an nginx reverse-proxy on the Ghost domain (see [08 — Configuration](./08-configuration.md#nginx-reverse-proxy-recommended)) so the Worker URL stays hidden and the call is same-origin (no CORS preflight).
+Exchanges a Ghost-signed member entitlement JWT (proof of email ownership + `paid` flag) for a short-lived, single-use redemption code. Called from the Ghost site's browser JS — recommended via an nginx reverse-proxy on the Ghost domain (see [08 — Configuration](./08-configuration.md#nginx-reverse-proxy-recommended)) so the Worker URL stays hidden and the call is same-origin (no CORS preflight).
 
 ### Authentication
 
-The request body must contain a Ghost-issued member JWT (RS256/RS384/RS512 — Ghost uses RS512 by default). The Worker verifies the signature against Ghost's published JWKS at `<GHOST_URL>/members/.well-known/jwks.json`. See [05 — Authentication](./05-authentication.md).
+The request body must contain a Ghost-issued member **entitlement** JWT, as returned by `GET /members/api/entitlements` (RS256/RS384/RS512 — Ghost uses RS512 by default; 5-minute expiry). The Worker verifies the signature against Ghost's published JWKS at `<GHOST_URL>/members/.well-known/jwks.json`, then requires `scope === "members:entitlements:read"` and a boolean `paid` claim. Identity tokens from `/members/api/session` are rejected. Requires a recent Ghost 6.x that exposes `/members/api/entitlements`. See [05 — Authentication](./05-authentication.md).
 
 ### CORS
 
@@ -27,7 +27,7 @@ Preflight is handled by `OPTIONS /code` returning `204` with the same headers.
 ### Request
 
 ```json
-{ "token": "<ghost_member_jwt>" }
+{ "token": "<ghost_entitlement_jwt>" }
 ```
 
 ### Responses
@@ -39,8 +39,9 @@ Preflight is handled by `OPTIONS /code` returning `204` with the same headers.
 | 400 | `{ "error": "Missing token" }` |
 | 400 | `{ "error": "Token missing email claim" }` |
 | 401 | `{ "error": "Invalid token" }` |
+| 401 | `{ "error": "Expected an entitlement token from /members/api/entitlements" }` |
 
-The returned `code` is 8 Crockford-base32 characters (~40 bits of entropy), single-use, with a 10-minute TTL enforced by KV `expirationTtl`.
+The returned `code` is 8 Crockford-base32 characters (~40 bits of entropy), single-use, with a 10-minute TTL enforced by KV `expirationTtl`. It is stored as `code:<CODE>` → `{ "email", "paid" }` (see [03 — Data Model](./03-data-model.md)).
 
 ---
 

@@ -13,10 +13,9 @@ All values are set via `wrangler secret put <NAME>` (production) or `.dev.vars` 
 | `DISCORD_PUBLIC_KEY` | hex string | Discord application's Ed25519 public key (interactions) |
 | `DISCORD_ROLE_MEMBER` | string (numeric) | Snowflake ID of the "Member" role |
 | `DISCORD_ROLE_PREMIUM` | string (numeric) | Snowflake ID of the "Premium Member" role |
-| `GHOST_URL` | URL (no trailing slash) | Base URL of the Ghost site (e.g., `https://blog.example.com`) |
-| `GHOST_ADMIN_API_KEY` | string (`id:hex_secret`) | Ghost Admin API key — used during `/link <code>` redemption to fetch the member's paid/comped/free status (the JWT only proves email ownership, not subscription tier) |
+| `GHOST_URL` | URL (no trailing slash) | Base URL of the Ghost site (e.g., `https://blog.example.com`) — used for the JWKS endpoint, the JWT `iss` check, and as the CORS origin |
 
-The `Env` interface in `src/types.ts` is the authoritative list of required bindings.
+The `Env` interface in `src/types.ts` is the authoritative list of required bindings. No Ghost Admin API key is needed: the member's paid status comes from the entitlement JWT presented to `POST /code`.
 
 ## KV Namespace
 
@@ -65,7 +64,6 @@ DISCORD_PUBLIC_KEY=your-public-key
 DISCORD_ROLE_MEMBER=your-member-role-id
 DISCORD_ROLE_PREMIUM=your-premium-role-id
 GHOST_URL=https://your-ghost-site.com
-GHOST_ADMIN_API_KEY=your-id:your-secret
 ```
 
 ## NPM Scripts
@@ -93,7 +91,9 @@ Three webhooks must be registered in **Ghost Admin → Settings → Integrations
 
 The integration's **Secret** must equal `WEBHOOK_SECRET`. Ghost will then send `X-Ghost-Signature` headers signed with this secret.
 
-The same Ghost integration also exposes the **Admin API Key** (format `id:secret`) used for member status lookups during code redemption. Set it as `GHOST_ADMIN_API_KEY`.
+### Ghost version
+
+The linking page relies on `GET /members/api/entitlements`, which is only available on a recent Ghost 6.x. Older Ghost versions (which only expose the identity token at `/members/api/session`) are not supported for linking: the Worker rejects identity tokens.
 
 ### nginx reverse proxy (recommended)
 
@@ -153,7 +153,7 @@ Notes:
 Create a Ghost page (e.g., "Discord access") and paste the following snippet into an **HTML card** in the Ghost editor. Optionally set the page visibility to members-only.
 
 The script:
-1. Calls `/members/api/session` with cookies — Ghost returns the member's identity JWT as plain text (or 401/204 when no session).
+1. Calls `/members/api/entitlements` with cookies — Ghost returns the member's entitlement JWT (email + `paid` flag, valid 5 minutes) as plain text (or 204 when no session).
 2. POSTs the JWT to `/code` on the **same origin** (proxied to the Worker by nginx).
 3. Displays the code with a copy button and a live countdown until expiry.
 
@@ -316,16 +316,17 @@ The script:
     btn.textContent = "Generating…";
 
     try {
-      const sessionRes = await fetch("/members/api/session", { credentials: "include" });
-      if (sessionRes.status === 401 || sessionRes.status === 204) {
+      // Fetched right before POST /code: the entitlement token expires after 5 minutes.
+      const entitlementRes = await fetch("/members/api/entitlements", { credentials: "include" });
+      if (entitlementRes.status === 401 || entitlementRes.status === 204) {
         showError("Please sign in to your account before generating a code.");
         return;
       }
-      if (!sessionRes.ok) {
-        showError("Unable to retrieve your Ghost session. Please try again later.");
+      if (!entitlementRes.ok) {
+        showError("Unable to retrieve your membership details. Please try again later.");
         return;
       }
-      const token = (await sessionRes.text()).trim();
+      const token = (await entitlementRes.text()).trim();
       if (!token) {
         showError("Please sign in to your account before generating a code.");
         return;
@@ -375,7 +376,7 @@ The script:
 **Before pasting:**
 
 - Set up the nginx `location = /code` block above and reload nginx first.
-- `/members/api/session` is the standard endpoint on Ghost 5.x. If your version exposes the member JWT elsewhere, change the URL in the script.
+- `/members/api/entitlements` requires a recent Ghost 6.x. On older versions it does not exist (the fetch fails with a non-OK status), and the identity token from `/members/api/session` will **not** work: `POST /code` rejects it with `401 Expected an entitlement token from /members/api/entitlements`.
 - If you choose **not** to use the nginx proxy, set `CODE_URL` to the absolute Worker URL (e.g., `"https://ghost-discord-worker.<account>.workers.dev/code"`) and verify the Worker's `GHOST_URL` secret exactly matches the Ghost site origin (scheme + host, no trailing slash) — that value is sent back as `Access-Control-Allow-Origin` during preflight.
 
 ## Discord Setup

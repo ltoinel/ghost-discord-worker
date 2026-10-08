@@ -1,7 +1,6 @@
-import type { Env } from "./types";
-import { json, isPaid } from "./utils";
+import type { Env, PendingLink } from "./types";
+import { json } from "./utils";
 import { verifyDiscordSignature, addRole } from "./discord";
-import { getGhostMember } from "./ghost";
 
 const InteractionType = { PING: 1, APPLICATION_COMMAND: 2 } as const;
 const MessageFlags = { EPHEMERAL: 64 } as const;
@@ -51,9 +50,9 @@ export async function handleDiscordInteraction(request: Request, env: Env): Prom
 
 /**
  * Handles the /link <code> slash command.
- * Redeems a single-use code (minted by POST /code after Ghost JWT verification),
+ * Redeems a single-use code (minted by POST /code after Ghost entitlement JWT verification),
  * enforces 1:1 mapping between email and Discord account, stores the bidirectional
- * mapping, and assigns the appropriate Discord roles.
+ * mapping, and assigns Discord roles from the `paid` flag captured with the code.
  */
 async function handleLinkCommand(interaction: any, userId: string, env: Env): Promise<Response> {
 	const rawCode = interaction.data.options?.[0]?.value;
@@ -62,10 +61,11 @@ async function handleLinkCommand(interaction: any, userId: string, env: Env): Pr
 	}
 
 	const code = String(rawCode).trim().toUpperCase();
-	const email = await env.GHOST_DISCORD_MAPPING.get(`code:${code}`);
-	if (!email) {
+	const pending = parsePendingLink(await env.GHOST_DISCORD_MAPPING.get(`code:${code}`));
+	if (!pending) {
 		return ephemeralReply("Invalid or expired code. Visit your Ghost site to generate a new one.");
 	}
+	const { email, paid } = pending;
 
 	const existingUserId = await env.GHOST_DISCORD_MAPPING.get(email);
 	if (existingUserId && existingUserId !== userId) {
@@ -77,14 +77,6 @@ async function handleLinkCommand(interaction: any, userId: string, env: Env): Pr
 		return ephemeralReply(`Your Discord account is already linked to **${existingEmail}**. Use \`/unlink\` first.`);
 	}
 
-	const ghostResult = await getGhostMember(email, env);
-	if (ghostResult.status === "error") {
-		return ephemeralReply(`An error occurred while verifying your membership: ${ghostResult.message}`);
-	}
-	if (ghostResult.status === "not_found") {
-		return ephemeralReply("This email is no longer associated with any Ghost membership.");
-	}
-
 	await env.GHOST_DISCORD_MAPPING.put(email, userId);
 	await env.GHOST_DISCORD_MAPPING.put(`discord:${userId}`, email);
 	await env.GHOST_DISCORD_MAPPING.delete(`code:${code}`);
@@ -92,7 +84,7 @@ async function handleLinkCommand(interaction: any, userId: string, env: Env): Pr
 	const errors: string[] = [];
 	const err1 = await addRole(env, userId, env.DISCORD_ROLE_MEMBER);
 	if (err1) errors.push(err1);
-	if (isPaid(ghostResult.member.status)) {
+	if (paid) {
 		const err2 = await addRole(env, userId, env.DISCORD_ROLE_PREMIUM);
 		if (err2) errors.push(err2);
 	}
@@ -103,6 +95,17 @@ async function handleLinkCommand(interaction: any, userId: string, env: Env): Pr
 	}
 
 	return ephemeralReply(`Your email **${email}** has been linked to your Discord account.`);
+}
+
+/** Parses a `code:<CODE>` KV value; returns null when missing or malformed. */
+function parsePendingLink(raw: string | null): PendingLink | null {
+	if (!raw) return null;
+	try {
+		const v = JSON.parse(raw);
+		return typeof v?.email === "string" && typeof v?.paid === "boolean" ? v : null;
+	} catch {
+		return null;
+	}
 }
 
 /**

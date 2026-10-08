@@ -11,6 +11,9 @@ import { handleCodePost, handleCodeOptions } from "../src/code";
 import { createEnv, signRS256JWT, signRSJWT, base64UrlEncode } from "./helpers";
 import type { Env } from "../src/types";
 
+/** Claims Ghost adds to tokens served by /members/api/entitlements. */
+const ENT = { scope: "members:entitlements:read", paid: false };
+
 let keyPair: CryptoKeyPair;
 let otherKeyPair: CryptoKeyPair;
 let keyPair512: CryptoKeyPair;
@@ -121,6 +124,7 @@ describe("POST /code", () => {
 		);
 		const payload = base64UrlEncode(
 			JSON.stringify({
+				...ENT,
 				sub: "a@b.co",
 				iss: env.GHOST_URL,
 				exp: Math.floor(Date.now() / 1000) + 3600,
@@ -135,6 +139,7 @@ describe("POST /code", () => {
 
 	it("rejects expired JWT", async () => {
 		const token = await signRS256JWT(keyPair.privateKey, {
+			...ENT,
 			sub: "a@b.co",
 			iss: env.GHOST_URL,
 			exp: Math.floor(Date.now() / 1000) - 60,
@@ -144,6 +149,7 @@ describe("POST /code", () => {
 
 	it("rejects JWT signed by unknown key (signature mismatch)", async () => {
 		const token = await signRS256JWT(otherKeyPair.privateKey, {
+			...ENT,
 			sub: "a@b.co",
 			iss: env.GHOST_URL,
 			exp: Math.floor(Date.now() / 1000) + 3600,
@@ -153,6 +159,7 @@ describe("POST /code", () => {
 
 	it("rejects JWT with wrong issuer", async () => {
 		const token = await signRS256JWT(keyPair.privateKey, {
+			...ENT,
 			sub: "a@b.co",
 			iss: "https://evil.example",
 			exp: Math.floor(Date.now() / 1000) + 3600,
@@ -163,6 +170,7 @@ describe("POST /code", () => {
 	it("rejects iss that prefix-matches GHOST_URL but is a different host", async () => {
 		// GHOST_URL = https://ghost.test → "https://ghost.test.attacker.com" used to pass with startsWith.
 		const token = await signRS256JWT(keyPair.privateKey, {
+			...ENT,
 			sub: "a@b.co",
 			iss: `${env.GHOST_URL}.attacker.com`,
 			exp: Math.floor(Date.now() / 1000) + 3600,
@@ -172,6 +180,7 @@ describe("POST /code", () => {
 
 	it("accepts iss with trailing slash matching GHOST_URL origin", async () => {
 		const token = await signRS256JWT(keyPair.privateKey, {
+			...ENT,
 			sub: "a@b.co",
 			iss: `${env.GHOST_URL}/`,
 			exp: Math.floor(Date.now() / 1000) + 3600,
@@ -184,6 +193,7 @@ describe("POST /code", () => {
 		const token = await signRS256JWT(
 			keyPair.privateKey,
 			{
+				...ENT,
 				sub: "a@b.co",
 				iss: env.GHOST_URL,
 				exp: Math.floor(Date.now() / 1000) + 3600,
@@ -197,6 +207,7 @@ describe("POST /code", () => {
 		const token = await signRSJWT(
 			keyPair512.privateKey,
 			{
+				...ENT,
 				sub: "ghost-user@example.com",
 				iss: `${env.GHOST_URL}/members/api`,
 				exp: Math.floor(Date.now() / 1000) + 600,
@@ -209,12 +220,13 @@ describe("POST /code", () => {
 		const body: any = await res.json();
 		expect(body.code).toMatch(/^[0-9A-Z]{8}$/);
 		expect(await env.GHOST_DISCORD_MAPPING.get(`code:${body.code}`)).toBe(
-			"ghost-user@example.com",
+			JSON.stringify({ email: "ghost-user@example.com", paid: false }),
 		);
 	});
 
 	it("mints code for valid JWT (uses sub when no email claim)", async () => {
 		const token = await signRS256JWT(keyPair.privateKey, {
+			...ENT,
 			sub: "a@b.co",
 			iss: env.GHOST_URL,
 			exp: Math.floor(Date.now() / 1000) + 3600,
@@ -227,11 +239,14 @@ describe("POST /code", () => {
 		const body: any = await res.json();
 		expect(body.code).toMatch(/^[0-9A-Z]{8}$/);
 		expect(body.expires_in).toBe(600);
-		expect(await env.GHOST_DISCORD_MAPPING.get(`code:${body.code}`)).toBe("a@b.co");
+		expect(await env.GHOST_DISCORD_MAPPING.get(`code:${body.code}`)).toBe(
+			JSON.stringify({ email: "a@b.co", paid: false }),
+		);
 	});
 
 	it("prefers email claim and lowercases it", async () => {
 		const token = await signRS256JWT(keyPair.privateKey, {
+			...ENT,
 			sub: "ignored",
 			email: "USER@B.CO",
 			iss: env.GHOST_URL,
@@ -240,12 +255,47 @@ describe("POST /code", () => {
 		const res = await handleCodePost(postCode({ token }), env);
 		const body: any = await res.json();
 		expect(await env.GHOST_DISCORD_MAPPING.get(`code:${body.code}`)).toBe(
-			"user@b.co",
+			JSON.stringify({ email: "user@b.co", paid: false }),
 		);
+	});
+
+	it("stores paid=true from the entitlement token", async () => {
+		const token = await signRS256JWT(keyPair.privateKey, {
+			...ENT,
+			paid: true,
+			sub: "a@b.co",
+			iss: env.GHOST_URL,
+			exp: Math.floor(Date.now() / 1000) + 3600,
+		});
+		const body: any = await (await handleCodePost(postCode({ token }), env)).json();
+		expect(await env.GHOST_DISCORD_MAPPING.get(`code:${body.code}`)).toBe(
+			JSON.stringify({ email: "a@b.co", paid: true }),
+		);
+	});
+
+	it("rejects identity tokens (members:identity scope from /members/api/session)", async () => {
+		const token = await signRS256JWT(keyPair.privateKey, {
+			scope: "members:identity",
+			sub: "a@b.co",
+			iss: env.GHOST_URL,
+			exp: Math.floor(Date.now() / 1000) + 3600,
+		});
+		expect((await handleCodePost(postCode({ token }), env)).status).toBe(401);
+	});
+
+	it("rejects entitlement tokens without a boolean paid claim", async () => {
+		const token = await signRS256JWT(keyPair.privateKey, {
+			scope: "members:entitlements:read",
+			sub: "a@b.co",
+			iss: env.GHOST_URL,
+			exp: Math.floor(Date.now() / 1000) + 3600,
+		});
+		expect((await handleCodePost(postCode({ token }), env)).status).toBe(401);
 	});
 
 	it("generated codes differ across calls", async () => {
 		const token = await signRS256JWT(keyPair.privateKey, {
+			...ENT,
 			sub: "a@b.co",
 			iss: env.GHOST_URL,
 			exp: Math.floor(Date.now() / 1000) + 3600,

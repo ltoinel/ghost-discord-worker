@@ -47,7 +47,6 @@ export function createEnv(overrides: Partial<Env> = {}): Env {
 		DISCORD_ROLE_PREMIUM: "333",
 		DISCORD_PUBLIC_KEY: "00".repeat(32),
 		GHOST_URL: "https://ghost.test",
-		GHOST_ADMIN_API_KEY: "someid:abcd1234567890abcdef",
 		...overrides,
 	};
 }

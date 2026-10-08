@@ -1,4 +1,4 @@
-import type { Env } from "./types";
+import type { Env, PendingLink } from "./types";
 import { json } from "./utils";
 import { verifyGhostMemberJWT } from "./jwt";
 
@@ -6,6 +6,8 @@ import { verifyGhostMemberJWT } from "./jwt";
 const ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 const CODE_LENGTH = 8;
 const CODE_TTL_SECONDS = 600;
+/** Scope of the token served by Ghost's `/members/api/entitlements` (vs `members:identity` for `/session`). */
+const ENTITLEMENT_SCOPE = "members:entitlements:read";
 
 /** Generates an 8-char base32 code (~40 bits of entropy) for in-Discord redemption. */
 function generateCode(): string {
@@ -34,9 +36,10 @@ export function handleCodeOptions(env: Env): Response {
 }
 
 /**
- * POST /code — Exchanges a Ghost member JWT for a short-lived redemption code.
- * The JWT proves the caller controls the Ghost member email; the code is stored
- * in KV (key `code:<code>`, value email) with a 10-minute TTL and is single-use.
+ * POST /code — Exchanges a Ghost member entitlement JWT for a short-lived redemption code.
+ * The JWT proves the caller controls the Ghost member email and carries the `paid` flag,
+ * so no Admin API lookup is needed. The code is stored in KV (key `code:<code>`,
+ * value `{ email, paid }` JSON) with a 10-minute TTL and is single-use.
  */
 export async function handleCodePost(request: Request, env: Env): Promise<Response> {
 	const headers = corsHeaders(env);
@@ -56,6 +59,9 @@ export async function handleCodePost(request: Request, env: Env): Promise<Respon
 	if (!claims) {
 		return json({ error: "Invalid token" }, 401, headers);
 	}
+	if (claims.scope !== ENTITLEMENT_SCOPE || typeof claims.paid !== "boolean") {
+		return json({ error: "Expected an entitlement token from /members/api/entitlements" }, 401, headers);
+	}
 
 	const email = (claims.email ?? claims.sub)?.toLowerCase();
 	if (!email) {
@@ -63,10 +69,11 @@ export async function handleCodePost(request: Request, env: Env): Promise<Respon
 	}
 
 	const code = generateCode();
-	await env.GHOST_DISCORD_MAPPING.put(`code:${code}`, email, {
+	const pending: PendingLink = { email, paid: claims.paid };
+	await env.GHOST_DISCORD_MAPPING.put(`code:${code}`, JSON.stringify(pending), {
 		expirationTtl: CODE_TTL_SECONDS,
 	});
 
-	console.log(`code issued for ${email}`);
+	console.log(`code issued for ${email} (paid=${claims.paid})`);
 	return json({ code, expires_in: CODE_TTL_SECONDS }, 200, headers);
 }

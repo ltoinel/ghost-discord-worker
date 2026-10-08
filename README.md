@@ -1,219 +1,48 @@
 # Ghost → Discord Role Sync
 
-A Cloudflare Worker that syncs Ghost CMS member events to Discord roles. When members are added, upgraded, downgraded, or deleted in Ghost, their Discord roles are automatically updated.
+[![CI](https://github.com/ltoinel/ghost-discord-worker/actions/workflows/ci.yml/badge.svg)](https://github.com/ltoinel/ghost-discord-worker/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/ltoinel/ghost-discord-worker/actions/workflows/codeql.yml/badge.svg)](https://github.com/ltoinel/ghost-discord-worker/actions/workflows/codeql.yml)
+[![Docs](https://github.com/ltoinel/ghost-discord-worker/actions/workflows/docs.yml/badge.svg)](https://ltoinel.github.io/ghost-discord-worker/)
+[![Coverage ≥ 90%](https://img.shields.io/badge/coverage-%E2%89%A5%2090%25-brightgreen)](https://github.com/ltoinel/ghost-discord-worker/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/github/license/ltoinel/ghost-discord-worker)](LICENSE)
+![Node ≥ 20](https://img.shields.io/badge/node-%E2%89%A5%2020-339933?logo=node.js&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)
+![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-F38020?logo=cloudflare&logoColor=white)
 
-## Architecture
+A Cloudflare Worker that keeps Discord roles in sync with Ghost CMS memberships. Members link their Discord account in one click, and their roles follow every subscription change.
 
 <p align="center">
-  <img src="docs/architecture.svg" alt="Architecture diagram: a Cloudflare Worker bridges Ghost CMS webhooks and Discord role mutations. Members prove email ownership by exchanging a Ghost-signed JWT for a single-use linking code redeemed via /link in Discord." width="900">
+  <img src="docs/architecture.svg" alt="Architecture diagram: a Cloudflare Worker bridges Ghost CMS webhooks and Discord role mutations. Members prove email ownership with a Ghost-signed entitlement JWT, exchanged for a single-use linking code redeemed via /link in Discord." width="900">
 </p>
 
-The worker uses a Cloudflare KV store to maintain a bidirectional mapping between Ghost member emails and Discord user IDs. Linking is proof-of-ownership: a logged-in Ghost browser POSTs the member's signed JWT to `/code`, the Worker verifies it against Ghost's JWKS and returns a short-lived single-use code, which the user redeems in Discord via `/link <code>`. Webhooks then sync role transitions automatically.
+## 📖 Documentation
 
-## Event Mapping
+**The full guide lives on GitHub Pages: [ltoinel.github.io/ghost-discord-worker](https://ltoinel.github.io/ghost-discord-worker/)**
 
-| Ghost Event | Discord Action |
-|---|---|
-| Member added (free) | Add **Member** role |
-| Member added (paid/comped) | Add **Member** + **Premium Member** roles |
-| Member deleted | Remove all roles (Member, Premium Member) |
-| Member updated (free → paid) | Add **Premium Member** role |
-| Member updated (paid → free) | Remove **Premium Member** role |
+- [Getting started](https://ltoinel.github.io/ghost-discord-worker/getting-started/): deploy, configure Ghost and Discord, add the linking page
+- [Development](https://ltoinel.github.io/ghost-discord-worker/development/): local server, tests, CI and security checks
+- [Specification](https://ltoinel.github.io/ghost-discord-worker/spec/): architecture, API, authentication, security model
 
-## Discord Slash Commands
+## How it works
 
-| Command | Description |
-|---|---|
-| `/link <code>` | Redeem a single-use linking code (obtained on the Ghost site via `POST /code` after JWT verification). Stores the mapping and assigns Discord roles based on Ghost membership status. |
-| `/unlink` | Unlink your Discord account from your Ghost email. |
+1. A signed-in member clicks **Get my Discord code** on your Ghost site. The page sends Ghost's signed entitlement token to the Worker, which returns a single-use code.
+2. The member types `/link <code>` in Discord and gets **Membre**, plus **Membre Premium** if they are a paid or comped member.
+3. Ghost webhooks keep the roles in sync when members upgrade, downgrade or leave.
 
-Each email can only be linked to one Discord account, and each Discord account can only be linked to one email.
-
-## Prerequisites
-
-- [Node.js](https://nodejs.org/) (v18+)
-- A [Cloudflare](https://cloudflare.com/) account
-- A [Discord bot](https://discord.com/developers/applications) with the **Manage Roles** permission
-- A [Ghost CMS](https://ghost.org/) instance with an Admin API key
-
-## Setup
-
-### 1. Install dependencies
+## Quick start
 
 ```sh
-npm install
+npm ci
+npx wrangler login
+./deploy.sh --secrets .env.prod --register-commands
 ```
 
-### 2. Create the KV namespace
+See [Getting started](https://ltoinel.github.io/ghost-discord-worker/getting-started/) for the secrets file and the Ghost and Discord setup.
 
-```sh
-npx wrangler kv namespace create GHOST_DISCORD_MAPPING
-```
+## Credits
 
-Copy the output `id` and replace `REPLACE_WITH_KV_NAMESPACE_ID` in `wrangler.toml`.
+The single-use code flow and the entitlements token come from the discussion on the Ghost forum: [Discord ↔ Ghost role sync](https://forum.ghost.org/t/discord-ghost-role-sync/61933/8).
 
-### 3. Configure secrets
+## License
 
-```sh
-npx wrangler secret put WEBHOOK_SECRET       # Shared secret for Ghost webhook URLs
-npx wrangler secret put ADMIN_SECRET         # Bearer token for /link admin endpoints
-npx wrangler secret put DISCORD_BOT_TOKEN    # Discord bot token
-npx wrangler secret put DISCORD_GUILD_ID     # Discord server ID
-npx wrangler secret put DISCORD_PUBLIC_KEY   # Discord app public key (for interaction verification)
-npx wrangler secret put DISCORD_ROLE_MEMBER  # Role ID for "Member"
-npx wrangler secret put DISCORD_ROLE_PREMIUM # Role ID for "Premium Member"
-npx wrangler secret put GHOST_URL            # Ghost site URL (e.g. https://mysite.com)
-npx wrangler secret put GHOST_ADMIN_API_KEY  # Ghost Admin API key (format: {id}:{secret})
-```
-
-### 4. Deploy
-
-```sh
-npm run deploy
-```
-
-### 5. Configure Ghost webhooks
-
-In **Ghost Admin → Settings → Integrations → Custom Integration**, create three webhooks:
-
-| Event | URL |
-|---|---|
-| Member added | `https://<worker>.workers.dev/webhook/added` |
-| Member updated | `https://<worker>.workers.dev/webhook/updated` |
-| Member deleted | `https://<worker>.workers.dev/webhook/deleted` |
-
-### 6. Register Discord slash commands
-
-Register the `/link` and `/unlink` commands with the Discord API for your application. Set the **Interactions Endpoint URL** to `https://<worker>.workers.dev/discord` in the Discord Developer Portal.
-
-### 7. Discord bot permissions
-
-The bot's role must be **higher** in the server's role hierarchy than the "Member" and "Premium Member" roles it manages.
-
-### 8. Add the member linking page to your Ghost site
-
-Members need a one-click way to obtain their linking code. Create a Ghost page (e.g. `https://<your-site>/discord/`) and paste the **ready-to-use HTML + CSS + JS snippet** from [`spec/08-configuration.md`](spec/08-configuration.md#get-my-discord-code-page-theme-js) into an HTML card. The snippet:
-
-1. Calls Ghost's `/members/api/session` to obtain the current member's signed JWT (sent automatically with the session cookie — works only when logged in).
-2. POSTs the JWT to `/code` on the Worker.
-3. Displays the resulting 8-character code with a Copy button and a live countdown until expiry (10 min).
-
-Member-facing flow once the page is live:
-
-> 1. Sign in to your Ghost account.
-> 2. Visit the "Discord access" page → click **Get my Discord code**.
-> 3. In Discord, type `/link <code>` (or paste with the Copy button).
-> 4. Your roles are assigned instantly.
-
-#### 8.a (recommended) — nginx reverse proxy for `/code`
-
-If your Ghost site sits behind nginx, add a `location = /code` block so the browser calls `https://<your-site>/code` instead of `https://<worker>.workers.dev/code` directly. Benefits: the Worker hostname stays out of network traces, the call becomes same-origin (no CORS preflight), and you control the edge timeouts.
-
-The full nginx snippet (with the `resolver` + variable-in-`proxy_pass` pattern required for `workers.dev` dynamic IPs) is in [`spec/08-configuration.md` → "nginx reverse proxy"](spec/08-configuration.md#nginx-reverse-proxy-recommended).
-
-If you skip the proxy, change `CODE_URL` in the widget JS to the absolute Worker URL and verify the Worker's `GHOST_URL` secret matches your site origin exactly (used as `Access-Control-Allow-Origin`).
-
-## API Reference
-
-### Member Endpoints
-
-#### `POST /code`
-
-Exchanges a Ghost-signed member JWT for a single-use 8-character linking code (10-min TTL). Called by the widget on the Ghost member page (see Setup step 8). Verifies the JWT against Ghost's published JWKS (`<GHOST_URL>/members/.well-known/jwks.json`) before issuing the code.
-
-```sh
-# Manual test (replace <jwt> with the value returned by /members/api/session in a logged-in session)
-curl -X POST https://<worker>.workers.dev/code \
-  -H "Content-Type: application/json" \
-  -d '{"token": "<jwt>"}'
-# → { "code": "G7K9MN2X", "expires_in": 600 }
-```
-
-CORS preflight is handled at `OPTIONS /code` and locked to the `GHOST_URL` origin.
-
-### Webhook Endpoints
-
-#### `POST /webhook/added`
-
-Handles `member.added` events from Ghost. Adds the Member role, plus the Premium role if the new member is paid or comped.
-
-#### `POST /webhook/updated`
-
-Handles `member.updated` events from Ghost. Adds or removes the Premium role on free↔paid transitions; paid↔comped and same-status updates are no-ops.
-
-#### `POST /webhook/deleted`
-
-Handles `member.deleted` events from Ghost. Removes both the Member and Premium roles.
-
-### Discord Interactions
-
-#### `POST /discord`
-
-Handles Discord slash command interactions (`/link`, `/unlink`). Requests are verified using Ed25519 signature validation.
-
-### Admin Endpoints
-
-All admin endpoints require the `Authorization: Bearer <ADMIN_SECRET>` header.
-
-#### `POST /link`
-
-Create an email → Discord user mapping.
-
-```sh
-curl -X POST https://<worker>.workers.dev/link \
-  -H "Authorization: Bearer <ADMIN_SECRET>" \
-  -H "Content-Type: application/json" \
-  -d '{"email": "user@example.com", "discord_user_id": "123456789"}'
-```
-
-#### `GET /link/:email`
-
-Look up a Discord user ID by email.
-
-```sh
-curl https://<worker>.workers.dev/link/user@example.com \
-  -H "Authorization: Bearer <ADMIN_SECRET>"
-```
-
-#### `DELETE /link`
-
-Remove an email → Discord user mapping.
-
-```sh
-curl -X DELETE https://<worker>.workers.dev/link \
-  -H "Authorization: Bearer <ADMIN_SECRET>" \
-  -H "Content-Type: application/json" \
-  -d '{"email": "user@example.com"}'
-```
-
-## Local Development
-
-Create a `.dev.vars` file at the project root:
-
-```
-WEBHOOK_SECRET=test
-ADMIN_SECRET=admin-secret
-DISCORD_BOT_TOKEN=your-bot-token
-DISCORD_GUILD_ID=your-guild-id
-DISCORD_PUBLIC_KEY=your-public-key
-DISCORD_ROLE_MEMBER=your-member-role-id
-DISCORD_ROLE_PREMIUM=your-premium-role-id
-GHOST_URL=https://your-ghost-site.com
-GHOST_ADMIN_API_KEY=your-id:your-secret
-```
-
-Start the dev server:
-
-```sh
-npm run dev
-```
-
-## Security
-
-- **Webhook authentication**: Ghost webhooks are validated via a shared secret passed as a query parameter, compared using a constant-time algorithm.
-- **Admin authentication**: The `/link` endpoints are protected by a Bearer token checked with constant-time comparison.
-- **Discord signature verification**: Slash command interactions are verified using Ed25519 signature validation with Discord's public key.
-- **Ghost email verification**: The `/link` slash command verifies that the email exists as a Ghost member via the Admin API before creating the mapping.
-- **Email validation**: All email inputs are validated against RFC 5322 format before processing to prevent injection attacks.
-- **No sensitive data exposure**: Discord API errors are logged server-side only; users receive generic error messages.
-- **Graceful skipping**: If a Ghost member email has no corresponding Discord mapping, webhooks return `200 OK` with `skipped: true` to prevent Ghost from retrying.
+[MIT](LICENSE) © Ludovic Toinel

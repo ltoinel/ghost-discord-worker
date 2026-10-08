@@ -6,26 +6,39 @@ The worker has four distinct authentication mechanisms, one per trust boundary. 
 
 | Endpoint | Mechanism | Secret Used |
 |----------|-----------|-------------|
-| `POST /code` | Ghost-signed member JWT (RS256/RS384/RS512), verified against Ghost JWKS | `GHOST_URL` (for JWKS endpoint) |
+| `POST /code` | Ghost-signed member entitlement JWT (RS256/RS384/RS512, `scope: members:entitlements:read`), verified against Ghost JWKS | `GHOST_URL` (for JWKS endpoint) |
 | `POST /webhook/added`, `POST /webhook/updated`, `POST /webhook/deleted` | HMAC-SHA256 signature, 5-min replay window | `WEBHOOK_SECRET` |
 | `POST /discord` | Ed25519 signature (Discord public key) | `DISCORD_PUBLIC_KEY` |
 | `POST/DELETE /link`, `GET /link/:email` | HTTP Bearer token | `ADMIN_SECRET` |
 
-The worker is **also** an authenticated client of two external APIs:
+The worker is **also** a client of two external endpoints:
 
 | Outbound | Mechanism | Credential |
 |----------|-----------|------------|
 | Discord REST API | `Authorization: Bot <token>` | `DISCORD_BOT_TOKEN` |
-| Ghost Admin API | `Authorization: Ghost <jwt>` (HS256, 5-min TTL) | `GHOST_ADMIN_API_KEY` (format `id:hex_secret`) |
 | Ghost JWKS endpoint | None (public) | n/a |
 
 ---
 
-## Ghost Member JWT (`POST /code`)
+## Ghost Member Entitlement JWT (`POST /code`)
 
 ### Purpose
 
-Establishes that the caller controls a specific Ghost member email. Ghost-issued member JWTs are signed with the site's private key, so only an authenticated Ghost browser session can mint one. The Worker uses this as proof-of-ownership before issuing a redemption code.
+Establishes that the caller controls a specific Ghost member email **and** whether that member is paid. The browser obtains the token from `GET /members/api/entitlements` (same-origin, session cookie; Ghost answers `200` with the JWT as plain text, or `204` when there is no valid session). Ghost signs it with the same site private key as identity tokens, so only an authenticated Ghost browser session can obtain one. The Worker uses it as proof-of-ownership before issuing a redemption code, and stores its `paid` flag with the code so that no Ghost Admin API lookup is needed at redemption.
+
+Requires a recent Ghost 6.x that exposes `/members/api/entitlements`.
+
+### Token claims
+
+| Claim | Value |
+|-------|-------|
+| `sub` | Member email |
+| `kid` (header) | Site key ID, matched against JWKS |
+| `iss` / `aud` | `<site>/members/api` |
+| `exp` | Issue time + **5 minutes** |
+| `scope` | `"members:entitlements:read"` (identity tokens from `/members/api/session` use `members:identity`) |
+| `paid` | Boolean, `member.status !== "free"` — comped members count as paid |
+| `member_uuid`, `active_tier_ids`, `jti` | Present, not used by the Worker |
 
 ### Request shape
 
@@ -47,9 +60,11 @@ Establishes that the caller controls a specific Ghost member email. Ghost-issued
 
 Failure at any step returns `null` → handler responds `401 Invalid token`.
 
+`handleCodePost` (`src/code.ts`) then requires `scope === "members:entitlements:read"` and `typeof paid === "boolean"`. Otherwise it responds `401 { "error": "Expected an entitlement token from /members/api/entitlements" }` — this is what an identity token from `/members/api/session` gets.
+
 ### Code generation
 
-After successful verification, the Worker generates an 8-character Crockford-base32 code from `crypto.getRandomValues` and writes it to KV with `expirationTtl: 600`. The code is returned in the response body.
+After successful verification, the Worker generates an 8-character Crockford-base32 code from `crypto.getRandomValues` and writes `code:<CODE>` → `{"email": "...", "paid": true|false}` (JSON) to KV with `expirationTtl: 600`. The code is returned in the response body.
 
 ### JWKS caching
 
@@ -138,30 +153,6 @@ Authorization: Bot <DISCORD_BOT_TOKEN>
 ```
 
 Required Discord application scope: bot must have **Manage Roles** permission in the guild. The bot's highest role must be **above** the two managed roles in the guild's role hierarchy (Discord rule, not enforced by the worker).
-
----
-
-## Outbound: Ghost Admin JWT (`generateGhostJWT` in `src/ghost.ts`)
-
-The `GHOST_ADMIN_API_KEY` has the format `<id>:<hex_secret>`. The worker mints a short-lived JWT per request:
-
-| Field | Value |
-|-------|-------|
-| Header | `{ alg: "HS256", typ: "JWT", kid: <id> }` |
-| Payload | `{ iss: <id>, aud: "/admin/", iat: now, exp: now + 300 }` |
-| Signature | HMAC-SHA256 over `base64url(header).base64url(payload)`, key = `hexToBytes(secret)` |
-
-Token TTL is **5 minutes**. Tokens are not cached — a new one is minted per Ghost API call. This is acceptable because `getGhostMember` is called only during code redemption, which is low-frequency.
-
-The token is sent as:
-
-```
-Authorization: Ghost <jwt>
-```
-
-### Why is the Admin API still needed?
-
-The member JWT verified at `POST /code` proves email ownership but does **not** include the member's current paid/free/comped status (Ghost's member JWT payload is identity-only). To assign the premium role at link time, the Worker still needs to look up status via the Admin API after redemption. If immediate premium-role assignment were dropped (deferring it to the next `member.updated` webhook), the Admin API dependency could be removed entirely.
 
 ---
 

@@ -1,6 +1,6 @@
 {
   "name": "ghost-discord-worker",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "private": true,
   "engines": {
     "node": ">=20"
@@ -8,15 +8,17 @@
   "scripts": {
     "build": "tsc --noEmit",
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "deploy": "./deploy.sh",
     "types": "wrangler types",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:watch": "vitest"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20250214.0",
-    "typescript": "^5.7.3",
-    "vitest": "^2.1.0",
-    "wrangler": "^4.66.0"
+    "@cloudflare/workers-types": "^5.20261008.1",
+    "@vitest/coverage-v8": "^5.0.3",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.3",
+    "wrangler": "^4.149.0"
   }
 }

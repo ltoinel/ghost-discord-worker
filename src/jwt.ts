@@ -20,6 +20,12 @@ export interface MemberClaims {
 	aud?: string;
 	exp: number;
 	iat?: number;
+	/** `members:identity` or `members:entitlements:read` — both are signed with the same key. */
+	scope?: string;
+	/** Entitlement tokens only: true when the member's status is not `free` (paid or comped). */
+	paid?: boolean;
+	member_uuid?: string;
+	active_tier_ids?: string[];
 }
 
 /**

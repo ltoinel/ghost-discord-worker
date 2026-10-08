@@ -9,7 +9,6 @@ export interface Env {
 	DISCORD_ROLE_PREMIUM: string;
 	DISCORD_PUBLIC_KEY: string;
 	GHOST_URL: string;
-	GHOST_ADMIN_API_KEY: string;
 }
 
 export type MemberStatus = "free" | "paid" | "comped";
@@ -28,7 +27,8 @@ export interface GhostWebhookPayload {
 	};
 }
 
-export type GhostLookupResult =
-	| { status: "found"; member: GhostMemberData }
-	| { status: "not_found" }
-	| { status: "error"; message: string };
+/** Value stored under `code:<CODE>` in KV, captured from the entitlement JWT at mint time. */
+export interface PendingLink {
+	email: string;
+	paid: boolean;
+}

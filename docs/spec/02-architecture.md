@@ -11,12 +11,12 @@
                                 │ /webhook/updated             ├──Discord API──▶  Discord Server
                                 │ /webhook/deleted             │
                                 │                              │
-  Browser  ─▶ nginx /code ─────▶┤ /code (Ghost member JWT)     ├──Ghost JWKS──▶   Ghost CMS
+  Browser  ─▶ nginx /code ─────▶┤ /code (entitlement JWT)      ├──Ghost JWKS──▶   Ghost CMS
   (Ghost     (same-origin       │                              │   /members/.well-known
    page)      reverse proxy)    │                              │
                                 │                              │
-  Discord  ─────POST────────────┤ /discord (Ed25519-signed)    ├──Ghost Admin──▶  Ghost CMS
-   user                         │                              │   API
+  Discord  ─────POST────────────┤ /discord (Ed25519-signed)    │
+   user                         │                              │
                                 │                              │
   Operator ─────HTTPS──────────▶│ /link  (Bearer-auth admin)   │
    / script                     │ /link/:email                 │
@@ -27,7 +27,7 @@
                                 │  Cloudflare KV               │
                                 │  GHOST_DISCORD_MAPPING       │
                                 │  - email ↔ user_id           │
-                                │  - code:<code> → email (TTL) │
+                                │  - code:<code> → {email,paid}│
                                 └──────────────────────────────┘
 ```
 
@@ -40,12 +40,11 @@ Only `/code` is reverse-proxied through the Ghost site's nginx; all other endpoi
 | `index.ts` | HTTP router: dispatches by path + method to handlers. Only entry point exported. |
 | `webhooks.ts` | Ghost webhook handlers (`/webhook/added`, `/webhook/updated`, `/webhook/deleted`); HMAC verification; role sync. |
 | `commands.ts` | Discord interaction handler (`/discord`); routes `/link <code>` and `/unlink` slash commands. |
-| `code.ts` | `POST /code` handler + CORS preflight; mints redemption codes after JWT verification. |
+| `code.ts` | `POST /code` handler + CORS preflight; mints redemption codes after entitlement JWT verification (requires `scope: members:entitlements:read`). |
 | `jwt.ts` | Ghost member JWT (RS256/RS384/RS512) verification via JWKS; per-isolate JWKS cache. |
 | `admin.ts` | Admin endpoints (`/link` POST/DELETE, `/link/:email` GET); Bearer-auth CRUD on mappings. |
 | `discord.ts` | Discord REST client (add/remove role) + Ed25519 interaction signature verification. |
-| `ghost.ts` | Ghost Admin API client; HS256 JWT generation; member lookup by email. |
-| `types.ts` | Shared TypeScript interfaces (`Env`, `GhostMemberData`, `GhostWebhookPayload`, ...). |
+| `types.ts` | Shared TypeScript interfaces (`Env`, `GhostMemberData`, `GhostWebhookPayload`, `PendingLink`, ...). |
 | `utils.ts` | Cross-cutting helpers: `json()`, `timingSafeEqual()`, `isValidEmail()`, `hexToBytes()`, `isPaid()`. |
 
 ## Request Routing (from `index.ts`)
@@ -91,8 +90,10 @@ For `/link/<email>`, the email is extracted as `decodeURIComponent(path.slice(6)
 
 ```
 1. User loads "Get Discord access" page on Ghost site (must be logged in).
-2. Page JS calls GET /members/api/session (same-origin, session cookie sent automatically).
-   Ghost returns the member's identity JWT as plain text.
+2. Page JS calls GET /members/api/entitlements (same-origin, session cookie sent automatically).
+   Ghost returns the member's entitlement JWT as plain text (200), or 204 when there is no session.
+   The JWT (RS512, 5-min expiry) carries sub (email), scope "members:entitlements:read",
+   paid (status !== "free"), active_tier_ids, member_uuid.
 3. Page POSTs { token } to /code (same-origin — no CORS preflight).
 4. nginx matches `location = /code` and proxy_passes to the Cloudflare Worker,
    preserving the request body and setting Host to the Worker domain.
@@ -101,7 +102,10 @@ For `/link/<email>`, the email is extracted as `decodeURIComponent(path.slice(6)
      - Fetch JWKS from <GHOST_URL>/members/.well-known/jwks.json (cached 1h per isolate).
      - RSASSA-PKCS1-v1_5 verify signature with the hash matching the alg, against the JWK whose kid matches.
      - Validate exp and (if present) iss origin equals GHOST_URL origin.
-6. Worker generates 8-char base32 code; KV.put("code:<code>", email, { expirationTtl: 600 }).
+   handleCodePost() then requires scope === "members:entitlements:read" and a boolean paid claim
+   (identity tokens from /members/api/session are rejected with 401).
+6. Worker generates 8-char base32 code;
+   KV.put("code:<code>", JSON.stringify({ email, paid }), { expirationTtl: 600 }).
 7. Worker returns { code, expires_in: 600 }; nginx streams the response back.
 8. Page displays the code with copy button and countdown.
 ```
@@ -117,11 +121,10 @@ When the nginx hop is skipped (direct browser → Worker), the flow is identical
 3. If interaction.type === 1 (PING) → reply { type: 1 } (Discord health check).
 4. If interaction.type === 2 (APPLICATION_COMMAND):
      - "link" → handleLinkCommand:
-         - Read code; KV.get("code:<code>") → email (or "Invalid or expired").
+         - Read code; KV.get("code:<code>") → { email, paid } (missing/malformed → "Invalid or expired").
          - Conflict checks (1:1 email ↔ user_id).
-         - getGhostMember(email) for current status.
          - Write mapping (both directions), delete code (single-use).
-         - Assign Member role + Premium role if isPaid(status).
+         - Assign Member role + Premium role if paid (no Ghost Admin API call).
      - "unlink" → handleUnlinkCommand (delete mapping).
 5. Reply with type 4 + flags 64 (ephemeral message, visible to invoker only).
 ```

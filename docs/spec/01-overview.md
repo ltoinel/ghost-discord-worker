@@ -44,7 +44,8 @@ Roles outside these two are not touched.
 | **Free member** | A Ghost member with `status = "free"` (signed up, no payment). |
 | **Mapping** | A bidirectional association between a Ghost email and a Discord user ID, stored in KV. |
 | **Linking** | The act of creating a mapping, either by user (`/link <code>` slash command) or admin (`POST /link`). |
-| **Linking code** | A short-lived (10 min), single-use, 8-character code minted by `POST /code` after Ghost JWT verification. Used by the Discord user to prove email ownership when redeeming via `/link`. |
+| **Linking code** | A short-lived (10 min), single-use, 8-character code minted by `POST /code` after Ghost entitlement JWT verification. Carries the member's email and `paid` flag; used by the Discord user to prove email ownership when redeeming via `/link`. |
+| **Entitlement token** | A short-lived (5 min) RS512 JWT returned by Ghost's `GET /members/api/entitlements` for the logged-in member. Contains `sub` (email), `scope: "members:entitlements:read"`, `paid` and `active_tier_ids`. |
 | **Interaction** | A Discord slash command invocation, delivered as a signed POST to `/discord`. |
 | **Webhook** | A Ghost-originated POST notifying the worker of a member event. |
 

@@ -3,25 +3,29 @@
 ## Commands
 
 - `npm run dev` — Start local dev server with `wrangler dev`
-- `npm run deploy` — Deploy to Cloudflare with `wrangler deploy`
+- `npm run deploy` / `./deploy.sh` — Type-check, test, then `wrangler deploy` (`--secrets FILE`, `--register-commands`, `--dry-run`, `--skip-tests`; creates `wrangler.toml` + KV namespace on first run)
 - `npm run types` — Generate Cloudflare Worker types with `wrangler types`
 - `npm run build` — Type-check with `tsc --noEmit`
 - `npm test` — Run unit tests (Vitest, plain Node — requires Node ≥ 20 for Ed25519 in Web Crypto)
+- `npm run test:coverage` — Tests with v8 coverage; fails under 90% (thresholds in `vitest.config.mts`)
 - `npm run test:watch` — Vitest watch mode
+- `mkdocs serve` — Preview the docs site (`pip install -r requirements-docs.txt`); specs live in `docs/spec/`, published to GitHub Pages by `.github/workflows/docs.yml`
+
+CI (`.github/workflows/`): `ci.yml` (build + coverage on Node 20/22/24, `npm audit`, ShellCheck, gitleaks, dependency review), `codeql.yml`, `docs.yml`.
 
 ## Architecture
 
-Cloudflare Worker (TypeScript) that receives Ghost CMS webhooks and updates Discord roles. Linking flow: a logged-in Ghost browser session calls `POST /code` (sending the member's signed JWT); the Worker verifies the JWT against Ghost's JWKS and mints a single-use code (10-min TTL in KV). The user then runs `/link <code>` in Discord; the Worker redeems the code, fetches member status from Ghost Admin API, writes the bidirectional mapping in KV, and assigns Discord roles.
+Cloudflare Worker (TypeScript) that receives Ghost CMS webhooks and updates Discord roles. Linking flow: a logged-in Ghost browser session fetches `/members/api/entitlements` and calls `POST /code` with the member's signed entitlement JWT (email + `paid` flag); the Worker verifies the JWT against Ghost's JWKS (and requires `scope: "members:entitlements:read"`), then mints a single-use code stored as `{email, paid}` (10-min TTL in KV). The user then runs `/link <code>` in Discord; the Worker redeems the code, writes the bidirectional mapping in KV, and assigns Discord roles from the stored `paid` flag (no Ghost Admin API call). Requires a recent Ghost 6.x exposing `/members/api/entitlements`.
 
 ```
 Browser (Ghost page)   ─JWT─▶ Cloudflare Worker ─JWKS─▶  Ghost CMS
                               │
 Ghost CMS ──webhook──▶ Cloudflare Worker ──Discord API──▶ Discord Server
                               │
-Discord User ──/link <code>─▶ Cloudflare Worker ──Ghost Admin API──▶ Ghost CMS
+Discord User ──/link <code>─▶ Cloudflare Worker
                               │
                         Cloudflare KV
-                  (email ↔ discord_user_id, code:CODE → email TTL)
+                  (email ↔ discord_user_id, code:CODE → {email, paid} TTL)
 ```
 
 ### Routes
@@ -29,7 +33,7 @@ Discord User ──/link <code>─▶ Cloudflare Worker ──Ghost Admin API─
 | Route | Method | Auth | Description |
 |-------|--------|------|-------------|
 | `/discord` | POST | Ed25519 signature | Discord interactions (slash commands) |
-| `/code` | POST | Ghost member JWT (RS256/RS384/RS512) | Mint a single-use linking code for `/link` |
+| `/code` | POST | Ghost member entitlement JWT (RS256/RS384/RS512, `scope: members:entitlements:read`) | Mint a single-use linking code for `/link` |
 | `/code` | OPTIONS | — | CORS preflight |
 | `/webhook/added` | POST | X-Ghost-Signature (HMAC-SHA256) | Ghost webhook for member.added |
 | `/webhook/updated` | POST | X-Ghost-Signature (HMAC-SHA256) | Ghost webhook for member.updated |
@@ -78,7 +82,6 @@ npx wrangler secret put DISCORD_PUBLIC_KEY
 npx wrangler secret put DISCORD_ROLE_MEMBER
 npx wrangler secret put DISCORD_ROLE_PREMIUM
 npx wrangler secret put GHOST_URL
-npx wrangler secret put GHOST_ADMIN_API_KEY
 ```
 
 For local development, create a `.dev.vars` file:
@@ -92,7 +95,6 @@ DISCORD_PUBLIC_KEY=your-public-key
 DISCORD_ROLE_MEMBER=your-member-role-id
 DISCORD_ROLE_PREMIUM=your-premium-role-id
 GHOST_URL=https://your-ghost-site.com
-GHOST_ADMIN_API_KEY=your-id:your-secret
 ```
 
 ### Ghost Configuration

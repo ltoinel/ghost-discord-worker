@@ -28,30 +28,8 @@ beforeAll(async () => {
 	publicKeyHex = bytesToHex(raw);
 });
 
-function mockGhostFound(
-	fetchSpy: ReturnType<typeof vi.spyOn>,
-	status: "free" | "paid" | "comped",
-) {
-	fetchSpy.mockImplementation(async (input: any) => {
-		const url = String(input);
-		if (url.includes("/ghost/api/admin/members/")) {
-			return new Response(
-				JSON.stringify({ members: [{ email: "a@b.co", status }] }),
-				{ status: 200 },
-			);
-		}
-		return new Response(null, { status: 204 });
-	});
-}
-
-function mockGhostNotFound(fetchSpy: ReturnType<typeof vi.spyOn>) {
-	fetchSpy.mockImplementation(async (input: any) => {
-		if (String(input).includes("/ghost/api/admin/members/")) {
-			return new Response(JSON.stringify({ members: [] }), { status: 200 });
-		}
-		return new Response(null, { status: 204 });
-	});
-}
+/** KV value written by POST /code. */
+const pending = (email: string, paid = false) => JSON.stringify({ email, paid });
 
 describe("handleDiscordInteraction", () => {
 	let env: Env;
@@ -188,8 +166,8 @@ describe("handleDiscordInteraction", () => {
 		});
 
 		it("happy path (paid): redeems, writes mapping, assigns both roles, deletes code", async () => {
-			await env.GHOST_DISCORD_MAPPING.put("code:ABC12345", "a@b.co");
-			mockGhostFound(fetchSpy, "paid");
+			await env.GHOST_DISCORD_MAPPING.put("code:ABC12345", pending("a@b.co", true));
+			fetchSpy.mockResolvedValue(new Response(null, { status: 204 }));
 
 			const req = await signedDiscordInteraction(privateKey, {
 				type: 2,
@@ -210,8 +188,8 @@ describe("handleDiscordInteraction", () => {
 		});
 
 		it("happy path (free): assigns only Member role", async () => {
-			await env.GHOST_DISCORD_MAPPING.put("code:CODE0001", "a@b.co");
-			mockGhostFound(fetchSpy, "free");
+			await env.GHOST_DISCORD_MAPPING.put("code:CODE0001", pending("a@b.co"));
+			fetchSpy.mockResolvedValue(new Response(null, { status: 204 }));
 
 			const req = await signedDiscordInteraction(privateKey, {
 				type: 2,
@@ -230,8 +208,8 @@ describe("handleDiscordInteraction", () => {
 		});
 
 		it("trims and uppercases the code", async () => {
-			await env.GHOST_DISCORD_MAPPING.put("code:ABC12345", "a@b.co");
-			mockGhostFound(fetchSpy, "free");
+			await env.GHOST_DISCORD_MAPPING.put("code:ABC12345", pending("a@b.co"));
+			fetchSpy.mockResolvedValue(new Response(null, { status: 204 }));
 
 			const req = await signedDiscordInteraction(privateKey, {
 				type: 2,
@@ -243,7 +221,7 @@ describe("handleDiscordInteraction", () => {
 		});
 
 		it("rejects when email is linked to a different Discord user", async () => {
-			await env.GHOST_DISCORD_MAPPING.put("code:CODE0001", "a@b.co");
+			await env.GHOST_DISCORD_MAPPING.put("code:CODE0001", pending("a@b.co"));
 			await env.GHOST_DISCORD_MAPPING.put("a@b.co", "other-user");
 
 			const req = await signedDiscordInteraction(privateKey, {
@@ -257,12 +235,12 @@ describe("handleDiscordInteraction", () => {
 			);
 			// Code should NOT be consumed on conflict
 			expect(await env.GHOST_DISCORD_MAPPING.get("code:CODE0001")).toBe(
-				"a@b.co",
+				pending("a@b.co"),
 			);
 		});
 
 		it("rejects when Discord user is already linked to a different email", async () => {
-			await env.GHOST_DISCORD_MAPPING.put("code:CODE0001", "new@b.co");
+			await env.GHOST_DISCORD_MAPPING.put("code:CODE0001", pending("new@b.co"));
 			await env.GHOST_DISCORD_MAPPING.put("discord:u1", "old@b.co");
 
 			const req = await signedDiscordInteraction(privateKey, {
@@ -275,10 +253,10 @@ describe("handleDiscordInteraction", () => {
 		});
 
 		it("idempotent re-link of same (email, userId) succeeds", async () => {
-			await env.GHOST_DISCORD_MAPPING.put("code:CODE0001", "a@b.co");
+			await env.GHOST_DISCORD_MAPPING.put("code:CODE0001", pending("a@b.co"));
 			await env.GHOST_DISCORD_MAPPING.put("a@b.co", "u1");
 			await env.GHOST_DISCORD_MAPPING.put("discord:u1", "a@b.co");
-			mockGhostFound(fetchSpy, "free");
+			fetchSpy.mockResolvedValue(new Response(null, { status: 204 }));
 
 			const req = await signedDiscordInteraction(privateKey, {
 				type: 2,
@@ -289,9 +267,8 @@ describe("handleDiscordInteraction", () => {
 			expect(json.data.content).toContain("has been linked");
 		});
 
-		it("rejects when Ghost no longer recognizes the email", async () => {
+		it("rejects malformed code entries", async () => {
 			await env.GHOST_DISCORD_MAPPING.put("code:CODE0001", "a@b.co");
-			mockGhostNotFound(fetchSpy);
 
 			const req = await signedDiscordInteraction(privateKey, {
 				type: 2,
@@ -299,21 +276,26 @@ describe("handleDiscordInteraction", () => {
 				member: { user: { id: "u1" } },
 			});
 			const json = (await (await handleDiscordInteraction(req, env)).json()) as any;
-			expect(json.data.content).toContain("no longer associated");
+			expect(json.data.content).toContain("Invalid or expired code");
+		});
+
+		it("does not call the Ghost Admin API", async () => {
+			await env.GHOST_DISCORD_MAPPING.put("code:CODE0001", pending("a@b.co", true));
+			fetchSpy.mockResolvedValue(new Response(null, { status: 204 }));
+
+			const req = await signedDiscordInteraction(privateKey, {
+				type: 2,
+				data: { name: "link", options: [{ value: "CODE0001" }] },
+				member: { user: { id: "u1" } },
+			});
+			await handleDiscordInteraction(req, env);
+			const urls = fetchSpy.mock.calls.map((c) => String(c[0]));
+			expect(urls.every((u) => u.includes("discord.com"))).toBe(true);
 		});
 
 		it("warns when role assignment fails", async () => {
-			await env.GHOST_DISCORD_MAPPING.put("code:CODE0001", "a@b.co");
-			fetchSpy.mockImplementation(async (input: any) => {
-				const url = String(input);
-				if (url.includes("/ghost/api/admin/members/")) {
-					return new Response(
-						JSON.stringify({ members: [{ email: "a@b.co", status: "free" }] }),
-						{ status: 200 },
-					);
-				}
-				return new Response("forbidden", { status: 403 });
-			});
+			await env.GHOST_DISCORD_MAPPING.put("code:CODE0001", pending("a@b.co"));
+			fetchSpy.mockResolvedValue(new Response("forbidden", { status: 403 }));
 
 			const req = await signedDiscordInteraction(privateKey, {
 				type: 2,

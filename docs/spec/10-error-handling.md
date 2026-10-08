@@ -63,6 +63,11 @@ No structured error codes, no stack traces, no request IDs.
 - Handler responds `401 { "error": "Invalid token" }` with CORS headers.
 - JWKS fetch errors are logged server-side as `JWKS fetch error: <err>`.
 
+### `POST /code` — not an entitlement token
+
+- If the verified JWT's `scope` is not `"members:entitlements:read"` or its `paid` claim is not a boolean, the handler responds `401 { "error": "Expected an entitlement token from /members/api/entitlements" }` with CORS headers.
+- Typical cause: the widget still fetches `/members/api/session` (identity token), or the Ghost version predates `/members/api/entitlements`.
+
 ### `POST /code` — missing email in claims
 
 - If neither `payload.email` nor `payload.sub` is present in the verified JWT, the handler responds `400 { "error": "Token missing email claim" }`.
@@ -70,20 +75,8 @@ No structured error codes, no stack traces, no request IDs.
 
 ### `/link <code>` — invalid or expired code
 
-- KV lookup for `code:<code>` returns null. Could mean: never issued, already redeemed, or TTL expired.
-- Handler replies with the generic `"Invalid or expired code. Visit your Ghost site to generate a new one."` — the same message for all three causes, by design (no enumeration).
-
-### `/link` slash command — Ghost API unreachable
-
-- `getGhostMember` catches `fetch` exceptions, logs `Ghost API fetch error: <err>`, and returns `{ status: "error", message: "Unable to reach Ghost API." }`.
-- Handler replies: `"An error occurred while verifying your email: Unable to reach Ghost API."`.
-- No KV write or role assignment happens.
-
-### `/link` slash command — Ghost API non-2xx
-
-- Logs `Ghost API error: <status> <body>`.
-- Returns `{ status: "error", message: "Ghost API returned <status>." }`.
-- Handler replies with the same generic "An error occurred…" template.
+- KV lookup for `code:<code>` returns null, or a value that is not valid `{ email: string, paid: boolean }` JSON (e.g. a legacy bare-email value minted before the entitlement change). Could mean: never issued, already redeemed, TTL expired, or malformed value.
+- Handler replies with the generic `"Invalid or expired code. Visit your Ghost site to generate a new one."` — the same message for all causes, by design (no enumeration).
 
 ### `/link` slash command — role assignment failure
 
@@ -106,15 +99,15 @@ All logging uses `console.log`, `console.warn`, and `console.error`. Output is v
 
 | Level | Triggers |
 |-------|----------|
-| `console.log` | Successful event processing: `member.added`, `member.updated (free->paid)`, `member.updated (paid->free)`, `member.deleted` |
+| `console.log` | Code issuance (`code issued for <email> (paid=<bool>)`), successful event processing: `member.added`, `member.updated (free->paid)`, `member.updated (paid->free)`, `member.deleted` |
 | `console.warn` | Webhook arrived for an unmapped email |
-| `console.error` | Ghost API failures, Discord API failures, role assignment failures |
+| `console.error` | JWKS fetch failures, Discord API failures, role assignment failures |
 
 There is **no structured logging** (JSON) and **no correlation ID**. Adding either would be a worthwhile enhancement for production observability but is out of scope of the current implementation.
 
 ## What is NOT Implemented
 
-- No retries on Discord or Ghost API failures.
+- No retries on Discord API or JWKS fetch failures.
 - No queue, dead-letter, or async deferral (`waitUntil` is not used).
 - No metrics export (counters, timers).
 - No alerting hooks.
@@ -128,7 +121,9 @@ There is **no structured logging** (JSON) and **no correlation ID**. Adding eith
 | User reports they're a paid member but lack the Premium role | Ghost webhook delivered before user linked, **or** transient Discord 5xx | Admin runs `POST /link` to set mapping, then re-trigger a Ghost member update to fire the webhook, or assign role manually in Discord |
 | `/link` returns "email already linked to another Discord account" for the legitimate owner | Previous user claimed mapping (intentional or accidental) | Admin `DELETE /link` to clear, then user retries `/link` |
 | Webhooks return 401 consistently | `WEBHOOK_SECRET` mismatch between Cloudflare and Ghost | Re-set the secret in both places |
-| `POST /code` returns 401 for valid Ghost session | JWKS cache holds a rotated key, or `GHOST_URL` does not match the JWT issuer | Wait up to 1 hour for cache expiry, or redeploy the Worker to clear the per-isolate cache |
+| `POST /code` returns 401 `Invalid token` for valid Ghost session | JWKS cache holds a rotated key, or `GHOST_URL` does not match the JWT issuer | Wait up to 1 hour for cache expiry, or redeploy the Worker to clear the per-isolate cache |
+| `POST /code` returns 401 `Expected an entitlement token…` | Widget fetches `/members/api/session` instead of `/members/api/entitlements`, or Ghost is too old to expose entitlements | Update the widget snippet ([08 — Configuration](./08-configuration.md)); upgrade to a recent Ghost 6.x |
+| User was paid but got no Premium role on `/link` (or vice versa) | Tier changed between minting and redeeming the code (status is a snapshot taken at mint time) | Re-trigger a Ghost member update, or fix the role manually in Discord |
 | `/link` says "Invalid or expired code" immediately after minting | Code TTL elapsed (>10 min between page load and Discord redemption), or KV write hadn't propagated | Mint a new code; KV is eventually consistent across regions |
 | Discord interactions return 401 | `DISCORD_PUBLIC_KEY` is wrong/outdated | Copy from Discord Developer Portal → `wrangler secret put` |
 | Role mutations log 403 | Bot role is below managed roles in hierarchy | Move bot role above `Member` / `Premium Member` in Discord server settings |

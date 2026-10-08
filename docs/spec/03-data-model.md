@@ -2,13 +2,13 @@
 
 ## KV Schema
 
-A single KV namespace, `GHOST_DISCORD_MAPPING`, stores all worker state. Keys are flat strings; values are flat strings. There are three key shapes: a bidirectional mapping (two keys) and ephemeral redemption codes (one key).
+A single KV namespace, `GHOST_DISCORD_MAPPING`, stores all worker state. Keys are flat strings; values are flat strings (code values are a small JSON string). There are three key shapes: a bidirectional mapping (two keys) and ephemeral redemption codes (one key).
 
 | Key | Value | TTL | Meaning |
 |-----|-------|-----|---------|
 | `<email-lowercased>` | `<discord_user_id>` | none | Forward: Ghost email → Discord user ID |
 | `discord:<discord_user_id>` | `<email-lowercased>` | none | Reverse: Discord user ID → Ghost email |
-| `code:<CODE>` | `<email-lowercased>` | 600s | Single-use redemption code minted by `POST /code` |
+| `code:<CODE>` | `{"email":"<email-lowercased>","paid":true\|false}` (JSON `PendingLink`) | 600s | Single-use redemption code minted by `POST /code`; `paid` is captured from the entitlement JWT at mint time |
 
 ### Invariants
 
@@ -16,13 +16,14 @@ A single KV namespace, `GHOST_DISCORD_MAPPING`, stores all worker state. Keys ar
 - The forward and reverse keys are written together by `/link` (admin and slash command) and deleted together by `/unlink` and `DELETE /link`.
 - Reverse keys are namespaced with the literal prefix `discord:`; code keys with `code:`. Email keys always contain `@`, so all three spaces are disjoint.
 - Code keys have `expirationTtl: 600` (10 minutes) at write time. They are also explicitly deleted on successful `/link` redemption (single-use).
+- A code value that is not valid `PendingLink` JSON (e.g. a legacy bare-email value) is treated as "Invalid or expired code".
 
 ### Examples
 
 ```
 "user@example.com"            → "987654321098765432"
 "discord:987654321098765432"  → "user@example.com"
-"code:G7K9MN2X"               → "user@example.com"   (expires in ≤ 10 min)
+"code:G7K9MN2X"               → '{"email":"user@example.com","paid":true}'   (expires in ≤ 10 min)
 ```
 
 ### Consistency Notes
@@ -44,7 +45,6 @@ export interface Env {
   DISCORD_ROLE_PREMIUM: string;
   DISCORD_PUBLIC_KEY: string;
   GHOST_URL: string;
-  GHOST_ADMIN_API_KEY: string;
 }
 
 export type MemberStatus = "free" | "paid" | "comped";
@@ -63,10 +63,11 @@ export interface GhostWebhookPayload {
   };
 }
 
-export type GhostLookupResult =
-  | { status: "found"; member: GhostMemberData }
-  | { status: "not_found" }
-  | { status: "error"; message: string };
+/** Value stored under `code:<CODE>` in KV, captured from the entitlement JWT at mint time. */
+export interface PendingLink {
+  email: string;
+  paid: boolean;
+}
 ```
 
 ## Ghost Webhook Payload Conventions
@@ -100,7 +101,7 @@ For `member.deleted`, the worker reads the email from `member.previous` because 
 | `"paid"`       | ✅ | Active paying subscriber |
 | `"comped"`     | ✅ | Gifted/complimentary paid access |
 
-`isPaid()` is the single source of truth for premium eligibility:
+`isPaid()` is the single source of truth for premium eligibility in webhook handling. At link time, the entitlement JWT's `paid` claim is used instead; Ghost computes it as `status !== "free"`, which matches `isPaid()` (comped counts as paid):
 
 ```ts
 export function isPaid(status: MemberStatus): boolean {
@@ -117,7 +118,7 @@ The worker only inspects a narrow subset of the Discord interaction object:
   type: 1 | 2,                          // PING or APPLICATION_COMMAND
   data?: {
     name: "link" | "unlink",
-    options?: [{ value: string }]       // /link's email argument
+    options?: [{ value: string }]       // /link's code argument
   },
   member?: {
     user?: { id: string }               // Invoking Discord user
