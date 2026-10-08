@@ -1,11 +1,14 @@
 # Extends the default gitleaks rules; allowlists documentation placeholders only.
+# Uses the single [allowlist] table, understood by every gitleaks 8.x release
+# (the [[allowlists]] array form needs 8.25+).
 [extend]
 useDefault = true
 
-[[allowlists]]
+[allowlist]
 description = "Documentation placeholders (example Discord IDs and the local admin secret)"
 regexTarget = "match"
 regexes = [
   '''987654321098765432''',
+  '''123456789012345678''',
   '''Bearer admin-secret''',
 ]
