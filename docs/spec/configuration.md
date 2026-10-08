@@ -63,12 +63,14 @@ GHOST_URL=https://your-ghost-site.com
 | Script | Runs | Notes |
 |---|---|---|
 | `npm run dev` | `wrangler dev` | Local Workers runtime with `.dev.vars` and a local KV |
+| `npm run lint` | `biome lint --error-on-warnings` | Lint (`biome.json`); warnings fail |
 | `npm run build` | `tsc --noEmit` | Type-check only |
 | `npm test` | `vitest run` | Node ≥ 20 (Ed25519 in Web Crypto) |
 | `npm run test:coverage` | `vitest run --coverage` | Fails under 90% coverage |
 | `npm run test:watch` | `vitest` | Watch mode |
 | `npm run deploy` | `./deploy.sh` | Type-check, tests, then `wrangler deploy`; see `./deploy.sh --help` |
 | `npm run types` | `wrangler types` | Regenerates `worker-configuration.d.ts` |
+| `prepare` (automatic) | `git config core.hooksPath .githooks` | Runs on `npm install`; enables the [git hooks](../development.md#git-hooks) |
 
 ## External requirements
 
