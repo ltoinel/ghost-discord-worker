@@ -8,7 +8,7 @@ import {
 	vi,
 } from "vitest";
 import { handleCodePost, handleCodeOptions } from "../src/code";
-import { createEnv, signRS256JWT, signRSJWT, base64UrlEncode } from "./helpers";
+import { createEnv, signRSJWT, base64UrlEncode } from "./helpers";
 import type { Env } from "../src/types";
 
 /** Claims Ghost adds to tokens served by /members/api/entitlements. */
@@ -138,7 +138,7 @@ describe("POST /code", () => {
 	});
 
 	it("rejects expired JWT", async () => {
-		const token = await signRS256JWT(keyPair.privateKey, {
+		const token = await signRSJWT(keyPair.privateKey, {
 			...ENT,
 			sub: "a@b.co",
 			iss: env.GHOST_URL,
@@ -148,7 +148,7 @@ describe("POST /code", () => {
 	});
 
 	it("rejects JWT signed by unknown key (signature mismatch)", async () => {
-		const token = await signRS256JWT(otherKeyPair.privateKey, {
+		const token = await signRSJWT(otherKeyPair.privateKey, {
 			...ENT,
 			sub: "a@b.co",
 			iss: env.GHOST_URL,
@@ -158,7 +158,7 @@ describe("POST /code", () => {
 	});
 
 	it("rejects JWT with wrong issuer", async () => {
-		const token = await signRS256JWT(keyPair.privateKey, {
+		const token = await signRSJWT(keyPair.privateKey, {
 			...ENT,
 			sub: "a@b.co",
 			iss: "https://evil.example",
@@ -169,7 +169,7 @@ describe("POST /code", () => {
 
 	it("rejects iss that prefix-matches GHOST_URL but is a different host", async () => {
 		// GHOST_URL = https://ghost.test → "https://ghost.test.attacker.com" used to pass with startsWith.
-		const token = await signRS256JWT(keyPair.privateKey, {
+		const token = await signRSJWT(keyPair.privateKey, {
 			...ENT,
 			sub: "a@b.co",
 			iss: `${env.GHOST_URL}.attacker.com`,
@@ -179,7 +179,7 @@ describe("POST /code", () => {
 	});
 
 	it("accepts iss with trailing slash matching GHOST_URL origin", async () => {
-		const token = await signRS256JWT(keyPair.privateKey, {
+		const token = await signRSJWT(keyPair.privateKey, {
 			...ENT,
 			sub: "a@b.co",
 			iss: `${env.GHOST_URL}/`,
@@ -190,7 +190,7 @@ describe("POST /code", () => {
 
 	it("rejects JWT without a kid header", async () => {
 		// Sign with empty kid — verifyGhostMemberJWT must reject before key lookup.
-		const token = await signRS256JWT(
+		const token = await signRSJWT(
 			keyPair.privateKey,
 			{
 				...ENT,
@@ -224,8 +224,8 @@ describe("POST /code", () => {
 		);
 	});
 
-	it("mints code for valid JWT (uses sub when no email claim)", async () => {
-		const token = await signRS256JWT(keyPair.privateKey, {
+	it("mints code for a valid entitlement JWT", async () => {
+		const token = await signRSJWT(keyPair.privateKey, {
 			...ENT,
 			sub: "a@b.co",
 			iss: env.GHOST_URL,
@@ -244,11 +244,10 @@ describe("POST /code", () => {
 		);
 	});
 
-	it("prefers email claim and lowercases it", async () => {
-		const token = await signRS256JWT(keyPair.privateKey, {
+	it("lowercases the email from sub", async () => {
+		const token = await signRSJWT(keyPair.privateKey, {
 			...ENT,
-			sub: "ignored",
-			email: "USER@B.CO",
+			sub: "USER@B.CO",
 			iss: env.GHOST_URL,
 			exp: Math.floor(Date.now() / 1000) + 3600,
 		});
@@ -260,7 +259,7 @@ describe("POST /code", () => {
 	});
 
 	it("stores paid=true from the entitlement token", async () => {
-		const token = await signRS256JWT(keyPair.privateKey, {
+		const token = await signRSJWT(keyPair.privateKey, {
 			...ENT,
 			paid: true,
 			sub: "a@b.co",
@@ -274,7 +273,7 @@ describe("POST /code", () => {
 	});
 
 	it("rejects identity tokens (members:identity scope from /members/api/session)", async () => {
-		const token = await signRS256JWT(keyPair.privateKey, {
+		const token = await signRSJWT(keyPair.privateKey, {
 			scope: "members:identity",
 			sub: "a@b.co",
 			iss: env.GHOST_URL,
@@ -284,7 +283,7 @@ describe("POST /code", () => {
 	});
 
 	it("rejects entitlement tokens without a boolean paid claim", async () => {
-		const token = await signRS256JWT(keyPair.privateKey, {
+		const token = await signRSJWT(keyPair.privateKey, {
 			scope: "members:entitlements:read",
 			sub: "a@b.co",
 			iss: env.GHOST_URL,
@@ -294,7 +293,7 @@ describe("POST /code", () => {
 	});
 
 	it("generated codes differ across calls", async () => {
-		const token = await signRS256JWT(keyPair.privateKey, {
+		const token = await signRSJWT(keyPair.privateKey, {
 			...ENT,
 			sub: "a@b.co",
 			iss: env.GHOST_URL,

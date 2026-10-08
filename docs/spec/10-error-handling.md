@@ -70,7 +70,7 @@ No structured error codes, no stack traces, no request IDs.
 
 ### `POST /code` — missing email in claims
 
-- If neither `payload.email` nor `payload.sub` is present in the verified JWT, the handler responds `400 { "error": "Token missing email claim" }`.
+- If `payload.sub` (the member email) is missing from the verified JWT, the handler responds `400 { "error": "Token missing email claim" }`.
 - Indicates a Ghost JWT format change or a non-member token mistakenly accepted by JWKS — should be investigated.
 
 ### `/link <code>` — invalid or expired code

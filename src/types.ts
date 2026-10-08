@@ -14,9 +14,7 @@ export interface Env {
 export type MemberStatus = "free" | "paid" | "comped";
 
 export interface GhostMemberData {
-	id?: string;
 	email: string;
-	name?: string;
 	status: MemberStatus;
 }
 

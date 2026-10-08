@@ -56,7 +56,7 @@ Requires a recent Ghost 6.x that exposes `/members/api/entitlements`.
 6. Import the JWK as an `RSASSA-PKCS1-v1_5` public key with the hash matching `alg` (`SHA-256` / `SHA-384` / `SHA-512`).
 7. Verify the signature over `${headerB64}.${payloadB64}`.
 8. Validate `exp` (must be in the future). If `iss` is present, require its URL **origin** to equal `GHOST_URL`'s origin (parsed via `new URL()`, not `startsWith`).
-9. Extract email from `payload.email ?? payload.sub`, lowercase it.
+9. Extract the email from `payload.sub` (Ghost has no separate `email` claim), lowercase it.
 
 Failure at any step returns `null` → handler responds `401 Invalid token`.
 

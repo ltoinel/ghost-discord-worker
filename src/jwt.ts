@@ -14,8 +14,8 @@ interface JWKS {
 }
 
 export interface MemberClaims {
+	/** The member's email (Ghost puts it in `sub`; there is no separate `email` claim). */
 	sub: string;
-	email?: string;
 	iss?: string;
 	aud?: string;
 	exp: number;
@@ -24,8 +24,6 @@ export interface MemberClaims {
 	scope?: string;
 	/** Entitlement tokens only: true when the member's status is not `free` (paid or comped). */
 	paid?: boolean;
-	member_uuid?: string;
-	active_tier_ids?: string[];
 }
 
 /**

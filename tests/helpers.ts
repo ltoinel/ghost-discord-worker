@@ -31,7 +31,6 @@ export function createMockKV(): KVNamespace {
 		async delete(key: string): Promise<void> {
 			store.delete(key);
 		},
-		_dump: () => new Map(store),
 	};
 	return ns as unknown as KVNamespace;
 }
@@ -134,6 +133,3 @@ export async function signRSJWT(
 	);
 	return `${signingInput}.${base64UrlEncode(new Uint8Array(sig))}`;
 }
-
-/** Back-compat alias — kept so existing tests using `signRS256JWT` continue to work. */
-export const signRS256JWT = signRSJWT;

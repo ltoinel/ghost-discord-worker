@@ -63,7 +63,7 @@ export async function handleCodePost(request: Request, env: Env): Promise<Respon
 		return json({ error: "Expected an entitlement token from /members/api/entitlements" }, 401, headers);
 	}
 
-	const email = (claims.email ?? claims.sub)?.toLowerCase();
+	const email = claims.sub?.toLowerCase();
 	if (!email) {
 		return json({ error: "Token missing email claim" }, 400, headers);
 	}
