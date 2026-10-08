@@ -50,10 +50,10 @@ The Discord user does **not** type their email here. They first visit the Ghost 
        → "Your Discord account is already linked to **<existingEmail>**.
           Use `/unlink` first."
 
-5. Write the bidirectional mapping + invalidate the code:
+5. Invalidate the code, then write the bidirectional mapping:
+       KV.delete("code:" + code)         // one-time use, consumed before the mapping is written
        KV.put(email, invokingUserId)
        KV.put("discord:" + invokingUserId, email)
-       KV.delete("code:" + code)         // one-time use
 
 6. Assign Discord roles (no Ghost API call — `paid` was captured from the entitlement JWT at mint time):
        addRole(DISCORD_ROLE_MEMBER)
@@ -74,6 +74,8 @@ The two conflict checks enforce a strict **1:1 mapping**:
 - Each Discord user maps to at most one email.
 
 Re-linking the same `(email, userId)` pair is **idempotent** — both conflict checks short-circuit on equality and the operation proceeds (overwriting the same values and re-applying roles).
+
+The conflict checks run **before** the code is consumed, so a rejected `/link` (conflict) leaves the code usable until its TTL. Once the checks pass, the code is deleted **before** the mapping is written, so a second concurrent redemption of the same code fails its lookup instead of linking another Discord account (see [09 — Security](./09-security.md#code-security-properties) for the limits of this under KV's eventual consistency).
 
 ### Why a code, not the email?
 
@@ -100,21 +102,35 @@ The previous design (`/link <email>`) let any Discord user claim any Ghost email
 
 2. If no email is linked → "No email is linked to your Discord account."
 
-3. Delete both KV keys:
+3. Remove both managed roles (Discord DELETE; a 404 — member already left the guild — counts as success):
+       removeRole(DISCORD_ROLE_MEMBER)
+       removeRole(DISCORD_ROLE_PREMIUM)
+
+4. If any role removal failed → log errors server-side, keep the mapping, and reply:
+       "Your roles could not be removed, so your account is still linked.
+        Please try again later or contact an administrator."
+
+5. Otherwise delete both KV keys:
        KV.delete(email)
        KV.delete("discord:" + invokingUserId)
 
-4. Reply: "Your email **<email>** has been unlinked from your Discord account."
+6. Reply: "Your email **<email>** has been unlinked from your Discord account
+           and your roles have been removed."
 ```
 
-### What `/unlink` does NOT do
+### Why `/unlink` removes roles
 
-- It does **not** remove Discord roles. The roles persist until either:
-  - Ghost emits `member.deleted` for the email, **and** the mapping is restored (it isn't), or
-  - A server admin removes the roles manually via Discord.
-- It does **not** call Ghost (Ghost has no awareness of Discord linkage).
+Once the mapping is gone, Ghost webhooks can no longer find the Discord user, so roles left in place could never be revoked by a later downgrade or deletion. Keeping them would let a single Ghost membership hand roles to any number of Discord accounts (link, unlink, relink with a new code, repeat). Roles are therefore removed **first**, and the mapping is deleted only once removal succeeded — a failed removal leaves the link intact so that webhooks keep governing the roles and the user can retry.
 
-This behavior is intentional: a user "unlinking" only severs the Ghost→Discord webhook bridge; they remain a Ghost member.
+`/unlink` does **not** call Ghost (Ghost has no awareness of Discord linkage); the user remains a Ghost member and can link again with a fresh code.
+
+### Replies
+
+| Condition | Reply text |
+|-----------|------------|
+| No email linked to the invoking Discord user | `"No email is linked to your Discord account."` |
+| Role removal failed (non-404 Discord error); mapping kept | `"Your roles could not be removed, so your account is still linked. Please try again later or contact an administrator."` |
+| Success | `"Your email **<email>** has been unlinked from your Discord account and your roles have been removed."` |
 
 ## Unknown Commands
 
@@ -141,4 +157,4 @@ All slash command replies use the Discord Interaction Response shape:
 - `type: 4` = `CHANNEL_MESSAGE_WITH_SOURCE`
 - `flags: 64` = `EPHEMERAL` (visible only to invoking user, suppresses notifications)
 
-Discord's 3-second deadline for an initial interaction response is the operative SLO. The `/link` command performs three KV reads, two KV writes, one KV delete, and up to two Discord API calls (no Ghost API call) — all serial. Under healthy conditions this stays well within the deadline.
+Discord's 3-second deadline for an initial interaction response is the operative SLO. The `/link` command performs three KV reads, two KV writes, one KV delete, and up to two Discord API calls (no Ghost API call) — all serial. `/unlink` performs one KV read, up to two Discord API calls, and two KV deletes. Under healthy conditions both stay well within the deadline.

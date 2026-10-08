@@ -95,7 +95,7 @@ Once the page is live, members:
 3. Type `/link <code>` in Discord.
 4. Get their roles immediately. Later subscription changes sync automatically through the webhooks.
 
-`/unlink` removes the mapping. Each email can be linked to one Discord account, and each Discord account to one email.
+`/unlink` removes their roles, then the mapping (if Discord refuses the role removal, the link is kept so they can retry). Each email can be linked to one Discord account, and each Discord account to one email.
 
 ## Admin API
 
@@ -105,13 +105,13 @@ Operators can manage mappings directly with `Authorization: Bearer <ADMIN_SECRET
 # Create
 curl -X POST https://<worker>.workers.dev/link \
   -H "Authorization: Bearer <ADMIN_SECRET>" -H "Content-Type: application/json" \
-  -d '{"email": "user@example.com", "discord_user_id": "123456789"}'
+  -d '{"email": "user@example.com", "discord_user_id": "987654321098765432"}'
 
 # Read
 curl https://<worker>.workers.dev/link/user@example.com \
   -H "Authorization: Bearer <ADMIN_SECRET>"
 
-# Delete
+# Delete (also removes the member's roles; 502 and mapping kept if that fails)
 curl -X DELETE https://<worker>.workers.dev/link \
   -H "Authorization: Bearer <ADMIN_SECRET>" -H "Content-Type: application/json" \
   -d '{"email": "user@example.com"}'

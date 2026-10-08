@@ -2,6 +2,8 @@ import type { Env } from "./types";
 import { hexToBytes } from "./utils";
 
 const DISCORD_API = "https://discord.com/api/v10";
+/** Signed interactions older (or newer) than this are rejected to limit replay of captured requests. */
+const MAX_INTERACTION_AGE_SECONDS = 5 * 60;
 
 /**
  * Verifies the Ed25519 signature of a Discord interaction request.
@@ -12,6 +14,9 @@ export async function verifyDiscordSignature(request: Request, publicKey: string
 	const signature = request.headers.get("X-Signature-Ed25519");
 	const timestamp = request.headers.get("X-Signature-Timestamp");
 	if (!signature || !timestamp) return null;
+
+	const ts = Number(timestamp);
+	if (!Number.isInteger(ts) || Math.abs(Date.now() / 1000 - ts) > MAX_INTERACTION_AGE_SECONDS) return null;
 
 	const body = await request.text();
 
@@ -35,6 +40,7 @@ export async function verifyDiscordSignature(request: Request, publicKey: string
 
 /**
  * Adds or removes a role from a guild member via the Discord API.
+ * A 404 on DELETE (member left the guild) counts as success: the role is already gone.
  * @returns An error description on failure, null on success.
  */
 async function modifyMemberRole(env: Env, userId: string, roleId: string, method: "PUT" | "DELETE"): Promise<string | null> {
@@ -45,7 +51,7 @@ async function modifyMemberRole(env: Env, userId: string, roleId: string, method
 			headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` },
 		},
 	);
-	if (!res.ok) {
+	if (!res.ok && !(method === "DELETE" && res.status === 404)) {
 		const body = await res.text();
 		console.error(`Discord ${method} role ${roleId} failed: ${res.status} ${body}`);
 		return `${method} role ${roleId}: ${res.status} ${body}`;

@@ -2,20 +2,23 @@
 
 ## KV Schema
 
-A single KV namespace, `GHOST_DISCORD_MAPPING`, stores all worker state. Keys are flat strings; values are flat strings (code values are a small JSON string). There are three key shapes: a bidirectional mapping (two keys) and ephemeral redemption codes (one key).
+A single KV namespace, `GHOST_DISCORD_MAPPING`, stores all worker state. Keys are flat strings; values are flat strings (code values are a small JSON string). There are four key shapes: a bidirectional mapping (two keys), ephemeral redemption codes, and a per-member pointer to the member's live code.
 
 | Key | Value | TTL | Meaning |
 |-----|-------|-----|---------|
 | `<email-lowercased>` | `<discord_user_id>` | none | Forward: Ghost email → Discord user ID |
 | `discord:<discord_user_id>` | `<email-lowercased>` | none | Reverse: Discord user ID → Ghost email |
 | `code:<CODE>` | `{"email":"<email-lowercased>","paid":true\|false}` (JSON `PendingLink`) | 600s | Single-use redemption code minted by `POST /code`; `paid` is captured from the entitlement JWT at mint time |
+| `pending:<email-lowercased>` | `<CODE>` (KV metadata `{"expiresAt": <unix_ms>}`) | 600s | The member's current live code, so repeated `POST /code` calls return it instead of minting (and writing) a new one |
 
 ### Invariants
 
 - Emails are **always lowercased** before being used as a key or value.
-- The forward and reverse keys are written together by `/link` (admin and slash command) and deleted together by `/unlink` and `DELETE /link`.
-- Reverse keys are namespaced with the literal prefix `discord:`; code keys with `code:`. Email keys always contain `@`, so all three spaces are disjoint.
-- Code keys have `expirationTtl: 600` (10 minutes) at write time. They are also explicitly deleted on successful `/link` redemption (single-use).
+- The forward and reverse keys are written together by `/link` (admin and slash command) and deleted together by `/unlink` and `DELETE /link` (after the Discord roles were removed successfully).
+- Admin `POST /link` also deletes stale reverse entries: the old `discord:<previous_user_id>` key if the email was linked to another Discord user, and the old `<previous_email>` key if the Discord user was linked to another email.
+- Reverse keys are namespaced with the literal prefix `discord:`; code keys with `code:`; code pointers with `pending:`. Validated emails never contain `:` (`isValidEmail` does not allow it), while every other key carries a `prefix:`, so the spaces are disjoint.
+- Code keys have `expirationTtl: 600` (10 minutes) at write time. They are also explicitly deleted on successful `/link` redemption (single-use) — **before** the mapping is written.
+- `pending:<email>` keys are written alongside the code with the same 600 s TTL; their `expiresAt` metadata lets `POST /code` compute the code's remaining lifetime without another write. They are not deleted on redemption: a pointer to an already-redeemed code is ignored because `code:<CODE>` no longer exists.
 - A code value that is not valid `PendingLink` JSON (e.g. a legacy bare-email value) is treated as "Invalid or expired code".
 
 ### Examples
@@ -24,6 +27,7 @@ A single KV namespace, `GHOST_DISCORD_MAPPING`, stores all worker state. Keys ar
 "user@example.com"            → "987654321098765432"
 "discord:987654321098765432"  → "user@example.com"
 "code:G7K9MN2X"               → '{"email":"user@example.com","paid":true}'   (expires in ≤ 10 min)
+"pending:user@example.com"    → "G7K9MN2X"   metadata {"expiresAt": 1767225600000}   (expires in ≤ 10 min)
 ```
 
 ### Consistency Notes
@@ -45,6 +49,8 @@ export interface Env {
   DISCORD_ROLE_PREMIUM: string;
   DISCORD_PUBLIC_KEY: string;
   GHOST_URL: string;
+  /** Optional Workers rate-limit binding applied per member email on POST /code. */
+  CODE_RATE_LIMITER?: RateLimit;
 }
 
 export type MemberStatus = "free" | "paid" | "comped";

@@ -17,7 +17,7 @@ export interface MemberClaims {
 	/** The member's email (Ghost puts it in `sub`; there is no separate `email` claim). */
 	sub: string;
 	iss?: string;
-	aud?: string;
+	aud?: string | string[];
 	exp: number;
 	iat?: number;
 	/** `members:identity` or `members:entitlements:read` — both are signed with the same key. */
@@ -33,9 +33,16 @@ export interface MemberClaims {
 let jwksCache: { jwks: JWKS; expiresAt: number } | null = null;
 const JWKS_TTL_MS = 60 * 60 * 1000;
 
-async function fetchJWKS(env: Env): Promise<JWKS> {
+/**
+ * An unknown `kid` forces a refetch (Ghost rotates its signing keys), at most once per
+ * minute so forged tokens with random kids cannot turn the Worker into a JWKS hammer.
+ */
+let lastForcedRefresh = 0;
+const FORCED_REFRESH_INTERVAL_MS = 60 * 1000;
+
+async function fetchJWKS(env: Env, force = false): Promise<JWKS> {
 	const now = Date.now();
-	if (jwksCache && jwksCache.expiresAt > now) return jwksCache.jwks;
+	if (!force && jwksCache && jwksCache.expiresAt > now) return jwksCache.jwks;
 
 	const res = await fetch(`${env.GHOST_URL}/members/.well-known/jwks.json`);
 	if (!res.ok) {
@@ -68,7 +75,7 @@ const ALG_HASH: Record<string, string> = {
 
 /**
  * Verifies a Ghost-issued member JWT (RS256/RS384/RS512, signed by the site's private key).
- * Validates signature against JWKS, then checks `exp` and (if present) `iss` origin.
+ * Validates signature against JWKS, then checks `exp` and the `iss` / `aud` origins.
  * @returns The decoded claims on success, or null on any verification failure.
  */
 export async function verifyGhostMemberJWT(token: string, env: Env): Promise<MemberClaims | null> {
@@ -89,15 +96,17 @@ export async function verifyGhostMemberJWT(token: string, env: Env): Promise<Mem
 	if (!hash) return null;
 	if (!header.kid) return null;
 
-	let jwks: JWKS;
+	let jwk: JWK | undefined;
 	try {
-		jwks = await fetchJWKS(env);
+		jwk = (await fetchJWKS(env)).keys.find((k) => k.kid === header.kid);
+		if (!jwk && Date.now() - lastForcedRefresh > FORCED_REFRESH_INTERVAL_MS) {
+			lastForcedRefresh = Date.now();
+			jwk = (await fetchJWKS(env, true)).keys.find((k) => k.kid === header.kid);
+		}
 	} catch (err) {
 		console.error(`JWKS fetch error: ${err}`);
 		return null;
 	}
-
-	const jwk = jwks.keys.find((k) => k.kid === header.kid);
 	if (!jwk) return null;
 
 	let key: CryptoKey;
@@ -125,7 +134,10 @@ export async function verifyGhostMemberJWT(token: string, env: Env): Promise<Mem
 
 	const now = Math.floor(Date.now() / 1000);
 	if (!payload.exp || now > payload.exp) return null;
-	if (payload.iss && !sameOrigin(payload.iss, env.GHOST_URL)) return null;
+	// Ghost always sets both to `<site>/members/api`; require them rather than trust their absence.
+	if (!payload.iss || !sameOrigin(payload.iss, env.GHOST_URL)) return null;
+	const audiences = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
+	if (!audiences.some((a) => typeof a === "string" && sameOrigin(a, env.GHOST_URL))) return null;
 
 	return payload;
 }

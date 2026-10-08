@@ -6,6 +6,13 @@ compatibility_date = "2024-12-02"
 binding = "GHOST_DISCORD_MAPPING"
 id = "xxxxxx"
 
+# Caps POST /code at 5 calls per minute per member email (optional but recommended).
+# namespace_id is any positive integer unique to this rate limiter in your account.
+[[ratelimits]]
+name = "CODE_RATE_LIMITER"
+namespace_id = "1001"
+simple = { limit = 5, period = 60 }
+
 # Secrets (set via `wrangler secret put <NAME>`):
 # - WEBHOOK_SECRET  = Secret for validating incoming webhook requests (e.g., "my_webhook_secret_value")
 # - ADMIN_SECRET    = Secret for admin authentication (e.g., "my_admin_secret_value")

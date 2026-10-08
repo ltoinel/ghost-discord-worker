@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" role="img" aria-labelledby="title desc" preserveAspectRatio="xMidYMid meet">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 556" role="img" aria-labelledby="title desc" preserveAspectRatio="xMidYMid meet">
   <title id="title">Ghost → Discord Worker — Architecture</title>
-  <desc id="desc">A Cloudflare Worker bridges Ghost CMS membership events to Discord roles. Members prove email ownership via a JWT redeemed for a single-use code typed into Discord.</desc>
+  <desc id="desc">A Cloudflare Worker bridges Ghost CMS membership events to Discord roles. Members prove email ownership with a Ghost-signed entitlement JWT (email + paid flag), exchanged for a single-use code typed into Discord. Unlinking removes the roles.</desc>
 
   <defs>
     <filter id="softShadow" x="-50%" y="-50%" width="200%" height="200%">
@@ -114,9 +114,9 @@
   <text class="code" x="480" y="240" text-anchor="middle">/link  (admin)    /link/:email</text>
 
   <!-- Caption -->
-  <text class="sub" x="480" y="280" text-anchor="middle">Verifies HMAC · Ed25519 · RS256/384/512 JWT</text>
-  <text class="sub" x="480" y="298" text-anchor="middle">Mints single-use linking codes (10 min TTL)</text>
-  <text class="sub" x="480" y="316" text-anchor="middle">Maps Ghost ↔ Discord, syncs roles on events</text>
+  <text class="sub" x="480" y="280" text-anchor="middle">Verifies HMAC · Ed25519 · entitlement JWT (iss, aud)</text>
+  <text class="sub" x="480" y="298" text-anchor="middle">One live code per member · rate-limited minting</text>
+  <text class="sub" x="480" y="316" text-anchor="middle">Syncs roles on webhooks · revokes them on /unlink</text>
 
   <!-- Tech micro-pills -->
   <rect x="345" y="338" width="80" height="24" rx="12" fill="#fbbf24" opacity="0.18"/>
@@ -125,8 +125,8 @@
   <rect x="435" y="338" width="70" height="24" rx="12" fill="#a5f3fc" opacity="0.35"/>
   <text class="code" x="470" y="354" text-anchor="middle" fill="#155e75">Wrangler</text>
 
-  <rect x="515" y="338" width="100" height="24" rx="12" fill="#bbf7d0" opacity="0.35"/>
-  <text class="code" x="565" y="354" text-anchor="middle" fill="#166534">100+ unit tests</text>
+  <rect x="515" y="338" width="110" height="24" rx="12" fill="#bbf7d0" opacity="0.35"/>
+  <text class="code" x="570" y="354" text-anchor="middle" fill="#166534">115 tests · 96%</text>
 
   <!-- ===== RIGHT: external services called by the Worker ===== -->
 
@@ -137,7 +137,8 @@
   <text class="title-m" x="810" y="78" text-anchor="middle">Ghost CMS</text>
   <text class="sub" x="810" y="98" text-anchor="middle">Member token verification</text>
   <text class="code" x="810" y="128" text-anchor="middle">/members/.well-known/jwks.json</text>
-  <text class="sub" x="810" y="158" text-anchor="middle">RS512 JWT signing key</text>
+  <text class="sub" x="810" y="152" text-anchor="middle">RS512 signing keys</text>
+  <text class="sub" x="810" y="166" text-anchor="middle">refetched on key rotation</text>
 
   <!-- Discord Server -->
   <g filter="url(#softShadow)">
@@ -152,12 +153,13 @@
   <!-- ===== BOTTOM: KV ===== -->
 
   <g filter="url(#softShadow)">
-    <rect class="kv" x="310" y="430" width="340" height="92" rx="12"/>
+    <rect class="kv" x="310" y="430" width="340" height="108" rx="12"/>
   </g>
   <text class="title-m" x="480" y="456" text-anchor="middle">Cloudflare KV</text>
   <text class="sub" x="480" y="474" text-anchor="middle">Bidirectional mapping + ephemeral codes</text>
   <text class="code" x="480" y="494" text-anchor="middle">email ↔ discord:user_id</text>
   <text class="code" x="480" y="510" text-anchor="middle">code:CODE → {email, paid} · 10 min, single-use</text>
+  <text class="code" x="480" y="526" text-anchor="middle">pending:email → CODE · reused while valid</text>
 
   <!-- ===== ARROWS — inbound (left → worker) ===== -->
 

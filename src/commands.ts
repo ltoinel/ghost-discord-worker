@@ -1,6 +1,7 @@
-import type { Env, PendingLink } from "./types";
+import type { Env } from "./types";
 import { json } from "./utils";
-import { verifyDiscordSignature, addRole } from "./discord";
+import { verifyDiscordSignature, addRole, removeRole } from "./discord";
+import { parsePendingLink } from "./code";
 
 const InteractionType = { PING: 1, APPLICATION_COMMAND: 2 } as const;
 const MessageFlags = { EPHEMERAL: 64 } as const;
@@ -77,9 +78,11 @@ async function handleLinkCommand(interaction: any, userId: string, env: Env): Pr
 		return ephemeralReply(`Your Discord account is already linked to **${existingEmail}**. Use \`/unlink\` first.`);
 	}
 
+	// Consume the code before writing the mapping so a concurrent redemption of the same code
+	// fails its lookup instead of linking a second Discord account.
+	await env.GHOST_DISCORD_MAPPING.delete(`code:${code}`);
 	await env.GHOST_DISCORD_MAPPING.put(email, userId);
 	await env.GHOST_DISCORD_MAPPING.put(`discord:${userId}`, email);
-	await env.GHOST_DISCORD_MAPPING.delete(`code:${code}`);
 
 	const errors: string[] = [];
 	const err1 = await addRole(env, userId, env.DISCORD_ROLE_MEMBER);
@@ -97,20 +100,11 @@ async function handleLinkCommand(interaction: any, userId: string, env: Env): Pr
 	return ephemeralReply(`Your email **${email}** has been linked to your Discord account.`);
 }
 
-/** Parses a `code:<CODE>` KV value; returns null when missing or malformed. */
-function parsePendingLink(raw: string | null): PendingLink | null {
-	if (!raw) return null;
-	try {
-		const v = JSON.parse(raw);
-		return typeof v?.email === "string" && typeof v?.paid === "boolean" ? v : null;
-	} catch {
-		return null;
-	}
-}
-
 /**
  * Handles the /unlink slash command.
- * Removes the bidirectional email ↔ Discord mapping from KV.
+ * Removes the Member and Premium roles, then the bidirectional email ↔ Discord mapping.
+ * Roles go first: once unlinked, webhooks can no longer revoke them, so keeping them would
+ * let one membership grant roles to any number of Discord accounts (link, unlink, repeat).
  */
 async function handleUnlinkCommand(userId: string, env: Env): Promise<Response> {
 	const email = await env.GHOST_DISCORD_MAPPING.get(`discord:${userId}`);
@@ -118,8 +112,19 @@ async function handleUnlinkCommand(userId: string, env: Env): Promise<Response> 
 		return ephemeralReply("No email is linked to your Discord account.");
 	}
 
+	const errors: string[] = [];
+	const err1 = await removeRole(env, userId, env.DISCORD_ROLE_MEMBER);
+	if (err1) errors.push(err1);
+	const err2 = await removeRole(env, userId, env.DISCORD_ROLE_PREMIUM);
+	if (err2) errors.push(err2);
+
+	if (errors.length > 0) {
+		console.error(`Role removal errors for ${email}: ${errors.join("; ")}`);
+		return ephemeralReply("Your roles could not be removed, so your account is still linked. Please try again later or contact an administrator.");
+	}
+
 	await env.GHOST_DISCORD_MAPPING.delete(email);
 	await env.GHOST_DISCORD_MAPPING.delete(`discord:${userId}`);
 
-	return ephemeralReply(`Your email **${email}** has been unlinked from your Discord account.`);
+	return ephemeralReply(`Your email **${email}** has been unlinked from your Discord account and your roles have been removed.`);
 }

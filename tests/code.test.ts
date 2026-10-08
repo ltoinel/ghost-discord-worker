@@ -12,7 +12,11 @@ import { createEnv, signRSJWT, base64UrlEncode } from "./helpers";
 import type { Env } from "../src/types";
 
 /** Claims Ghost adds to tokens served by /members/api/entitlements. */
-const ENT = { scope: "members:entitlements:read", paid: false };
+const ENT = {
+	scope: "members:entitlements:read",
+	paid: false,
+	aud: "https://ghost.test/members/api",
+};
 
 let keyPair: CryptoKeyPair;
 let otherKeyPair: CryptoKeyPair;
@@ -292,19 +296,112 @@ describe("POST /code", () => {
 		expect((await handleCodePost(postCode({ token }), env)).status).toBe(401);
 	});
 
-	it("generated codes differ across calls", async () => {
+	it("reuses the member's live code instead of writing a new one", async () => {
 		const token = await signRSJWT(keyPair.privateKey, {
 			...ENT,
 			sub: "a@b.co",
 			iss: env.GHOST_URL,
 			exp: Math.floor(Date.now() / 1000) + 3600,
 		});
-		const codes = new Set<string>();
-		for (let i = 0; i < 5; i++) {
-			const res = await handleCodePost(postCode({ token }), env);
-			const body: any = await res.json();
-			codes.add(body.code);
-		}
-		expect(codes.size).toBe(5);
+		const first: any = await (await handleCodePost(postCode({ token }), env)).json();
+		const putSpy = vi.spyOn(env.GHOST_DISCORD_MAPPING, "put");
+		const second: any = await (await handleCodePost(postCode({ token }), env)).json();
+		expect(second.code).toBe(first.code);
+		expect(second.expires_in).toBeGreaterThan(590);
+		expect(putSpy).not.toHaveBeenCalled();
 	});
+
+	it("mints a new code when the paid status changed", async () => {
+		const sign = (paid: boolean) =>
+			signRSJWT(keyPair.privateKey, {
+				...ENT,
+				paid,
+				sub: "a@b.co",
+				iss: env.GHOST_URL,
+				exp: Math.floor(Date.now() / 1000) + 3600,
+			});
+		const free: any = await (await handleCodePost(postCode({ token: await sign(false) }), env)).json();
+		const paid: any = await (await handleCodePost(postCode({ token: await sign(true) }), env)).json();
+		expect(paid.code).not.toBe(free.code);
+		expect(await env.GHOST_DISCORD_MAPPING.get(`code:${paid.code}`)).toBe(
+			JSON.stringify({ email: "a@b.co", paid: true }),
+		);
+	});
+
+	it("mints a new code once the previous one was redeemed", async () => {
+		const token = await signRSJWT(keyPair.privateKey, {
+			...ENT,
+			sub: "a@b.co",
+			iss: env.GHOST_URL,
+			exp: Math.floor(Date.now() / 1000) + 3600,
+		});
+		const first: any = await (await handleCodePost(postCode({ token }), env)).json();
+		await env.GHOST_DISCORD_MAPPING.delete(`code:${first.code}`);
+		const second: any = await (await handleCodePost(postCode({ token }), env)).json();
+		expect(second.code).not.toBe(first.code);
+	});
+
+	it("does not reuse a code that is about to expire", async () => {
+		await env.GHOST_DISCORD_MAPPING.put("code:OLDCODE1", JSON.stringify({ email: "a@b.co", paid: false }));
+		await env.GHOST_DISCORD_MAPPING.put("pending:a@b.co", "OLDCODE1", {
+			metadata: { expiresAt: Date.now() + 30_000 },
+		});
+		const token = await signRSJWT(keyPair.privateKey, {
+			...ENT,
+			sub: "a@b.co",
+			iss: env.GHOST_URL,
+			exp: Math.floor(Date.now() / 1000) + 3600,
+		});
+		const body: any = await (await handleCodePost(postCode({ token }), env)).json();
+		expect(body.code).not.toBe("OLDCODE1");
+	});
+
+	it("returns 429 when the rate limiter rejects the member", async () => {
+		const limit = vi.fn().mockResolvedValue({ success: false });
+		env = createEnv({ CODE_RATE_LIMITER: { limit } });
+		const token = await signRSJWT(keyPair.privateKey, {
+			...ENT,
+			sub: "A@B.co",
+			iss: env.GHOST_URL,
+			exp: Math.floor(Date.now() / 1000) + 3600,
+		});
+		const res = await handleCodePost(postCode({ token }), env);
+		expect(res.status).toBe(429);
+		expect(res.headers.get("Retry-After")).toBe("60");
+		expect(limit).toHaveBeenCalledWith({ key: "a@b.co" });
+	});
+
+	it("rejects tokens without iss", async () => {
+		const token = await signRSJWT(keyPair.privateKey, {
+			...ENT,
+			sub: "a@b.co",
+			exp: Math.floor(Date.now() / 1000) + 3600,
+		});
+		expect((await handleCodePost(postCode({ token }), env)).status).toBe(401);
+	});
+
+	it("rejects tokens without aud or with a foreign aud", async () => {
+		for (const aud of [undefined, "https://evil.example/members/api", ["https://evil.example"]]) {
+			const token = await signRSJWT(keyPair.privateKey, {
+				...ENT,
+				aud,
+				sub: "a@b.co",
+				iss: env.GHOST_URL,
+				exp: Math.floor(Date.now() / 1000) + 3600,
+			});
+			expect((await handleCodePost(postCode({ token }), env)).status).toBe(401);
+		}
+	});
+
+	it("accepts aud given as an array", async () => {
+		const token = await signRSJWT(keyPair.privateKey, {
+			...ENT,
+			aud: ["https://ghost.test/members/api"],
+			sub: "a@b.co",
+			iss: env.GHOST_URL,
+			exp: Math.floor(Date.now() / 1000) + 3600,
+		});
+		expect((await handleCodePost(postCode({ token }), env)).status).toBe(200);
+	});
+
 });

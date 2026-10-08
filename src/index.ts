@@ -43,7 +43,12 @@ export default {
 			return handleLinkDelete(request, env);
 		}
 		if (path.startsWith("/link/") && request.method === "GET") {
-			const email = decodeURIComponent(path.slice(6));
+			let email: string;
+			try {
+				email = decodeURIComponent(path.slice(6));
+			} catch {
+				return json({ error: "Invalid email format" }, 400);
+			}
 			return handleLinkGet(email, request, env);
 		}
 

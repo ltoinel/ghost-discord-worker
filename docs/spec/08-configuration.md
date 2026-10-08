@@ -13,7 +13,7 @@ All values are set via `wrangler secret put <NAME>` (production) or `.dev.vars` 
 | `DISCORD_PUBLIC_KEY` | hex string | Discord application's Ed25519 public key (interactions) |
 | `DISCORD_ROLE_MEMBER` | string (numeric) | Snowflake ID of the "Member" role |
 | `DISCORD_ROLE_PREMIUM` | string (numeric) | Snowflake ID of the "Premium Member" role |
-| `GHOST_URL` | URL (no trailing slash) | Base URL of the Ghost site (e.g., `https://blog.example.com`) — used for the JWKS endpoint, the JWT `iss` check, and as the CORS origin |
+| `GHOST_URL` | URL (no trailing slash) | Base URL of the Ghost site (e.g., `https://blog.example.com`) — used for the JWKS endpoint, the JWT `iss` / `aud` checks, and as the CORS origin |
 
 The `Env` interface in `src/types.ts` is the authoritative list of required bindings. No Ghost Admin API key is needed: the member's paid status comes from the entitlement JWT presented to `POST /code`.
 
@@ -50,6 +50,25 @@ id = "<namespace-id>"
 ```
 
 The `compatibility_date` of `2024-12-02` is required for Web Crypto `Ed25519` support (used by Discord signature verification).
+
+### Rate limiting (optional)
+
+`POST /code` can be throttled per member with a [Workers rate-limit binding](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/) named `CODE_RATE_LIMITER`. `wrangler.toml.sample` includes it (recommended); keep this block in your `wrangler.toml` to enable it, or remove it to disable rate limiting:
+
+```toml
+# Caps POST /code at 5 calls per minute per member email (optional but recommended).
+# namespace_id is any positive integer unique to this rate limiter in your account.
+[[ratelimits]]
+name = "CODE_RATE_LIMITER"
+namespace_id = "1001"
+simple = { limit = 5, period = 60 }   # period in seconds: Cloudflare accepts 10 or 60
+```
+
+`deploy.sh` only creates `wrangler.toml` from the sample on first run, so an existing `wrangler.toml` must be updated by hand.
+
+The Worker calls it with the member email as key, after the JWT is verified. Over the limit, `POST /code` returns `429 { "error": "Too many requests, please wait a minute" }` with `Retry-After: 60`. The binding is optional (`CODE_RATE_LIMITER?: RateLimit` in `Env`): without it, no rate limit is applied.
+
+Why it matters: the KV free tier allows **1,000 writes per day**. Each newly minted code costs two writes (`code:<CODE>` and `pending:<email>`). Code reuse already limits a member to roughly one new code per 8 minutes, and repeated clicks while a code is live cost reads only; the rate limiter additionally caps the reads and JWKS-backed verifications a single logged-in member can trigger. Cloudflare rate limits are counted per location and are approximate, so treat them as abuse damping, not an exact quota.
 
 ## Local Development (`.dev.vars`)
 

@@ -3,30 +3,38 @@ import type { Env } from "../src/types";
 interface Entry {
 	value: string;
 	expiresAt?: number;
+	metadata?: unknown;
 }
 
 /** In-memory KV stub honoring `expirationTtl`. Sufficient for the methods this worker uses. */
 export function createMockKV(): KVNamespace {
 	const store = new Map<string, Entry>();
+	const live = (key: string): Entry | null => {
+		const entry = store.get(key);
+		if (!entry) return null;
+		if (entry.expiresAt && entry.expiresAt < Date.now()) {
+			store.delete(key);
+			return null;
+		}
+		return entry;
+	};
 	const ns = {
 		async get(key: string): Promise<string | null> {
-			const entry = store.get(key);
-			if (!entry) return null;
-			if (entry.expiresAt && entry.expiresAt < Date.now()) {
-				store.delete(key);
-				return null;
-			}
-			return entry.value;
+			return live(key)?.value ?? null;
+		},
+		async getWithMetadata(key: string) {
+			const entry = live(key);
+			return { value: entry?.value ?? null, metadata: entry?.metadata ?? null };
 		},
 		async put(
 			key: string,
 			value: string,
-			options?: { expirationTtl?: number },
+			options?: { expirationTtl?: number; metadata?: unknown },
 		): Promise<void> {
 			const expiresAt = options?.expirationTtl
 				? Date.now() + options.expirationTtl * 1000
 				: undefined;
-			store.set(key, { value, expiresAt });
+			store.set(key, { value, expiresAt, metadata: options?.metadata });
 		},
 		async delete(key: string): Promise<void> {
 			store.delete(key);

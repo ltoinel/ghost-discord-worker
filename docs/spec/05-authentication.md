@@ -8,7 +8,7 @@ The worker has four distinct authentication mechanisms, one per trust boundary. 
 |----------|-----------|-------------|
 | `POST /code` | Ghost-signed member entitlement JWT (RS256/RS384/RS512, `scope: members:entitlements:read`), verified against Ghost JWKS | `GHOST_URL` (for JWKS endpoint) |
 | `POST /webhook/added`, `POST /webhook/updated`, `POST /webhook/deleted` | HMAC-SHA256 signature, 5-min replay window | `WEBHOOK_SECRET` |
-| `POST /discord` | Ed25519 signature (Discord public key) | `DISCORD_PUBLIC_KEY` |
+| `POST /discord` | Ed25519 signature (Discord public key), 5-min timestamp window | `DISCORD_PUBLIC_KEY` |
 | `POST/DELETE /link`, `GET /link/:email` | HTTP Bearer token | `ADMIN_SECRET` |
 
 The worker is **also** a client of two external endpoints:
@@ -34,7 +34,7 @@ Requires a recent Ghost 6.x that exposes `/members/api/entitlements`.
 |-------|-------|
 | `sub` | Member email |
 | `kid` (header) | Site key ID, matched against JWKS |
-| `iss` / `aud` | `<site>/members/api` |
+| `iss` / `aud` | `<site>/members/api` — both **required**, origin must equal `GHOST_URL`'s (`aud` may be a string or an array) |
 | `exp` | Issue time + **5 minutes** |
 | `scope` | `"members:entitlements:read"` (identity tokens from `/members/api/session` use `members:identity`) |
 | `paid` | Boolean, `member.status !== "free"` — comped members count as paid |
@@ -52,10 +52,10 @@ Requires a recent Ghost 6.x that exposes `/members/api/entitlements`.
 2. Decode and parse the header. Require `alg` to be one of `RS256`, `RS384`, `RS512` (Ghost uses `RS512` by default).
 3. Require `header.kid` to be non-empty.
 4. Fetch JWKS from `<GHOST_URL>/members/.well-known/jwks.json`. Result cached per-isolate for 1 hour.
-5. Select the JWK whose `kid` matches `header.kid`. No fallback to "first key".
+5. Select the JWK whose `kid` matches `header.kid`. No fallback to "first key". If no key matches, refetch the JWKS once (bypassing the cache) and retry the lookup — at most one forced refetch per minute per isolate (see [JWKS caching](#jwks-caching)).
 6. Import the JWK as an `RSASSA-PKCS1-v1_5` public key with the hash matching `alg` (`SHA-256` / `SHA-384` / `SHA-512`).
 7. Verify the signature over `${headerB64}.${payloadB64}`.
-8. Validate `exp` (must be in the future). If `iss` is present, require its URL **origin** to equal `GHOST_URL`'s origin (parsed via `new URL()`, not `startsWith`).
+8. Validate `exp` (must be in the future). Require `iss` to be present and its URL **origin** to equal `GHOST_URL`'s origin (parsed via `new URL()`, not `startsWith`). Require `aud` to be present — a string or an array — with at least one entry whose origin equals `GHOST_URL`'s origin. Ghost always sets both to `<site>/members/api`, so their absence is treated as a failure rather than trusted.
 9. Extract the email from `payload.sub` (Ghost has no separate `email` claim), lowercase it.
 
 Failure at any step returns `null` → handler responds `401 Invalid token`.
@@ -64,11 +64,11 @@ Failure at any step returns `null` → handler responds `401 Invalid token`.
 
 ### Code generation
 
-After successful verification, the Worker generates an 8-character Crockford-base32 code from `crypto.getRandomValues` and writes `code:<CODE>` → `{"email": "...", "paid": true|false}` (JSON) to KV with `expirationTtl: 600`. The code is returned in the response body.
+After successful verification, the Worker applies the optional `CODE_RATE_LIMITER` (keyed by email; rejection → `429`), then returns the member's existing code if it is still reusable (tracked under `pending:<email>`, see [04 — API Reference](./04-api-reference.md#code-reuse-and-rate-limiting)). Otherwise it generates an 8-character Crockford-base32 code from `crypto.getRandomValues`, writes `code:<CODE>` → `{"email": "...", "paid": true|false}` (JSON) and `pending:<email>` → `<CODE>` to KV, both with `expirationTtl: 600`, and returns the code in the response body.
 
 ### JWKS caching
 
-A module-level cache (per V8 isolate) holds the JWKS for up to 1 hour. Isolate eviction naturally clears stale entries; no manual invalidation is implemented. If Ghost rotates keys, brief verification failures (≤1h) are possible until the cache refreshes — acceptable for this use case.
+A module-level cache (per V8 isolate) holds the JWKS for up to 1 hour. When a token carries a `kid` that is not in the cached set — typically right after Ghost rotates its signing keys — the Worker forces one refetch and retries the lookup, so rotation no longer causes up to an hour of failures. Forced refetches are throttled to **one per minute per isolate**, so forged tokens with random `kid`s cannot turn the Worker into an amplifier against Ghost's JWKS endpoint; within that minute, further unknown `kid`s are rejected without a fetch.
 
 ---
 
@@ -107,12 +107,15 @@ X-Signature-Timestamp:  <unix_seconds>
 ### Verification algorithm (`verifyDiscordSignature` in `src/discord.ts`)
 
 1. Read both headers; reject if either is missing.
-2. Read the raw body as text.
-3. Import `DISCORD_PUBLIC_KEY` (hex-decoded) as an Ed25519 public key via `crypto.subtle.importKey`.
-4. Verify the signature over the message `timestamp + body`.
-5. On success, return the body string; on failure, return null → handler responds `401`.
+2. Parse `X-Signature-Timestamp` as integer seconds. Reject if it is not an integer or if `|now - timestamp| > 5 * 60` (5 minutes).
+3. Read the raw body as text.
+4. Import `DISCORD_PUBLIC_KEY` (hex-decoded) as an Ed25519 public key via `crypto.subtle.importKey`.
+5. Verify the signature over the message `timestamp + body`.
+6. On success, return the body string; on failure, return null → handler responds `401`.
 
-There is no timestamp staleness check on Discord interactions — Discord's signature already binds the timestamp, and Discord clients send near-real-time.
+### Replay protection
+
+The signature binds the timestamp, and the ±5-minute window bounds how long a captured interaction can be replayed (Discord sends interactions in near real time). As with webhooks, there is no nonce store; replaying a captured `/link` within the window fails anyway because the code is single-use.
 
 ### PING contract
 

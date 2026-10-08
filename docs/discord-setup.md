@@ -159,10 +159,10 @@ To check, type `/` in a channel of your server: your bot's commands appear.
 4. The bot replies with a message only you can see: *"Your email … has been linked to your Discord account."*
 5. Check that the member role appears on your profile.
 6. In Ghost Admin, give this member a complimentary (comped) subscription: the premium role appears a few seconds later.
-7. Type `/unlink` to remove the link.
+7. Type `/unlink` to remove the link: the bot confirms that your roles have been removed, and both roles disappear from your profile.
 
-!!! info "`/unlink` keeps existing roles"
-    `/unlink` only deletes the email ↔ Discord mapping. Roles already assigned stay in place; remove them by hand if needed.
+!!! info "`/unlink` removes the roles"
+    `/unlink` first removes the member and premium roles, then deletes the email ↔ Discord mapping. Once unlinked, Ghost webhooks can no longer reach the account, so roles left behind could never be revoked. If Discord refuses the removal, the link is kept and the bot replies *"Your roles could not be removed, so your account is still linked…"*: fix the cause (usually the role hierarchy, [step 2.4](#24-put-the-bots-role-above-them)) and run `/unlink` again.
 
 Follow the Worker's activity live while testing:
 
@@ -180,6 +180,8 @@ npx wrangler tail
 | *"Unable to retrieve your membership details"* on the blog page | Ghost version without `/members/api/entitlements` | Update Ghost to a recent 6.x |
 | *"Expected an entitlement token…"* on the blog page | Old widget still calling `/members/api/session` | Paste the [current widget](spec/08-configuration.md#get-my-discord-code-page-theme-js) |
 | Linked, but *"roles could not be assigned"* | Bot role below the managed roles, or **Manage Roles** permission missing | Redo [step 2.4](#24-put-the-bots-role-above-them) and check the bot's permissions |
+| `/unlink` replies *"Your roles could not be removed, so your account is still linked…"* | Same causes: bot role below the managed roles, or **Manage Roles** missing | Redo [step 2.4](#24-put-the-bots-role-above-them), then run `/unlink` again |
+| *"Too many requests, please wait a minute"* on the blog page | The optional `CODE_RATE_LIMITER` caps code requests per member | Wait a minute, then click again: the same code comes back as long as it has at least 2 minutes left |
 | Network error on the blog page | Wrong `CODE_URL`, missing nginx proxy, or `GHOST_URL` different from the real origin | Check [the linking page setup](getting-started.md#4-add-the-linking-page-to-ghost); `GHOST_URL` has no trailing slash and the right `www` |
 | `502` on `/code` after a few hours | nginx proxy without `resolver` | Use the exact block from [nginx reverse proxy](spec/08-configuration.md#nginx-reverse-proxy-recommended) |
 | Subscription changes are not reflected | Webhook missing, wrong URL, or secret different from `WEBHOOK_SECRET` | Check [the Ghost webhooks](getting-started.md#3-configure-ghost-webhooks) and `npx wrangler tail` |

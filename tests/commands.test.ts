@@ -111,6 +111,7 @@ describe("handleDiscordInteraction", () => {
 	it("falls back to user.id when member is absent (user-app interaction)", async () => {
 		await env.GHOST_DISCORD_MAPPING.put("discord:dm-user", "a@b.co");
 		await env.GHOST_DISCORD_MAPPING.put("a@b.co", "dm-user");
+		fetchSpy.mockResolvedValue(new Response(null, { status: 204 }));
 
 		const req = await signedDiscordInteraction(privateKey, {
 			type: 2,
@@ -120,6 +121,13 @@ describe("handleDiscordInteraction", () => {
 		const res = await handleDiscordInteraction(req, env);
 		const json = (await res.json()) as any;
 		expect(json.data.content).toContain("has been unlinked");
+	});
+
+	it("rejects a validly signed interaction with a stale timestamp", async () => {
+		const stale = String(Math.floor(Date.now() / 1000) - 10 * 60);
+		const req = await signedDiscordInteraction(privateKey, { type: 1 }, stale);
+		const res = await handleDiscordInteraction(req, env);
+		expect(res.status).toBe(401);
 	});
 
 	it("responds to PING with type 1", async () => {
@@ -267,6 +275,29 @@ describe("handleDiscordInteraction", () => {
 			expect(json.data.content).toContain("has been linked");
 		});
 
+		it("consumes the code before writing the mapping", async () => {
+			await env.GHOST_DISCORD_MAPPING.put("code:CODE0001", pending("a@b.co"));
+			fetchSpy.mockResolvedValue(new Response(null, { status: 204 }));
+			const order: string[] = [];
+			const kv = env.GHOST_DISCORD_MAPPING;
+			vi.spyOn(kv, "delete").mockImplementation(async function (this: unknown, key: string) {
+				order.push(`delete ${key}`);
+			} as any);
+			const realPut = kv.put.bind(kv);
+			vi.spyOn(kv, "put").mockImplementation((async (key: string, value: string) => {
+				order.push(`put ${key}`);
+				return realPut(key, value);
+			}) as any);
+
+			const req = await signedDiscordInteraction(privateKey, {
+				type: 2,
+				data: { name: "link", options: [{ value: "CODE0001" }] },
+				member: { user: { id: "u1" } },
+			});
+			await handleDiscordInteraction(req, env);
+			expect(order).toEqual(["delete code:CODE0001", "put a@b.co", "put discord:u1"]);
+		});
+
 		it("rejects malformed code entries", async () => {
 			await env.GHOST_DISCORD_MAPPING.put("code:CODE0001", "a@b.co");
 
@@ -295,7 +326,7 @@ describe("handleDiscordInteraction", () => {
 
 		it("warns when role assignment fails", async () => {
 			await env.GHOST_DISCORD_MAPPING.put("code:CODE0001", pending("a@b.co"));
-			fetchSpy.mockResolvedValue(new Response("forbidden", { status: 403 }));
+			fetchSpy.mockImplementation(async () => new Response("forbidden", { status: 403 }));
 
 			const req = await signedDiscordInteraction(privateKey, {
 				type: 2,
@@ -320,9 +351,10 @@ describe("handleDiscordInteraction", () => {
 			expect(json.data.content).toContain("No email is linked");
 		});
 
-		it("removes both directions", async () => {
+		it("removes both roles, then both directions", async () => {
 			await env.GHOST_DISCORD_MAPPING.put("a@b.co", "u1");
 			await env.GHOST_DISCORD_MAPPING.put("discord:u1", "a@b.co");
+			fetchSpy.mockResolvedValue(new Response(null, { status: 204 }));
 
 			const req = await signedDiscordInteraction(privateKey, {
 				type: 2,
@@ -331,21 +363,67 @@ describe("handleDiscordInteraction", () => {
 			});
 			const json = (await (await handleDiscordInteraction(req, env)).json()) as any;
 			expect(json.data.content).toContain("has been unlinked");
+			expect(json.data.content).toContain("roles have been removed");
 			expect(await env.GHOST_DISCORD_MAPPING.get("a@b.co")).toBeNull();
 			expect(await env.GHOST_DISCORD_MAPPING.get("discord:u1")).toBeNull();
+
+			const calls = fetchSpy.mock.calls.map((c) => [String(c[0]), (c[1] as RequestInit).method]);
+			expect(calls).toEqual([
+				[expect.stringContaining(`/members/u1/roles/${env.DISCORD_ROLE_MEMBER}`), "DELETE"],
+				[expect.stringContaining(`/members/u1/roles/${env.DISCORD_ROLE_PREMIUM}`), "DELETE"],
+			]);
 		});
 
-		it("does NOT call Discord API", async () => {
+		it("unlinks when the member already left the guild (404)", async () => {
 			await env.GHOST_DISCORD_MAPPING.put("a@b.co", "u1");
 			await env.GHOST_DISCORD_MAPPING.put("discord:u1", "a@b.co");
+			fetchSpy.mockResolvedValue(new Response("Unknown Member", { status: 404 }));
 
 			const req = await signedDiscordInteraction(privateKey, {
 				type: 2,
 				data: { name: "unlink" },
 				member: { user: { id: "u1" } },
 			});
-			await handleDiscordInteraction(req, env);
-			expect(fetchSpy).not.toHaveBeenCalled();
+			const json = (await (await handleDiscordInteraction(req, env)).json()) as any;
+			expect(json.data.content).toContain("has been unlinked");
+			expect(await env.GHOST_DISCORD_MAPPING.get("discord:u1")).toBeNull();
+		});
+
+		it("keeps the link when roles cannot be removed", async () => {
+			await env.GHOST_DISCORD_MAPPING.put("a@b.co", "u1");
+			await env.GHOST_DISCORD_MAPPING.put("discord:u1", "a@b.co");
+			fetchSpy.mockImplementation(async () => new Response("forbidden", { status: 403 }));
+
+			const req = await signedDiscordInteraction(privateKey, {
+				type: 2,
+				data: { name: "unlink" },
+				member: { user: { id: "u1" } },
+			});
+			const json = (await (await handleDiscordInteraction(req, env)).json()) as any;
+			expect(json.data.content).toContain("still linked");
+			expect(await env.GHOST_DISCORD_MAPPING.get("a@b.co")).toBe("u1");
+			expect(await env.GHOST_DISCORD_MAPPING.get("discord:u1")).toBe("a@b.co");
+		});
+
+		it("link → unlink → link with another account leaves no roles on the first", async () => {
+			fetchSpy.mockResolvedValue(new Response(null, { status: 204 }));
+			const run = async (userId: string, data: object) =>
+				handleDiscordInteraction(
+					await signedDiscordInteraction(privateKey, { type: 2, data, member: { user: { id: userId } } }),
+					env,
+				);
+
+			await env.GHOST_DISCORD_MAPPING.put("code:CODE0001", pending("a@b.co", true));
+			await run("u1", { name: "link", options: [{ value: "CODE0001" }] });
+			await run("u1", { name: "unlink" });
+			await env.GHOST_DISCORD_MAPPING.put("code:CODE0002", pending("a@b.co", true));
+			await run("u2", { name: "link", options: [{ value: "CODE0002" }] });
+
+			const u1Calls = fetchSpy.mock.calls
+				.filter((c) => String(c[0]).includes("/members/u1/"))
+				.map((c) => (c[1] as RequestInit).method);
+			// Two PUTs on link, then two DELETEs on unlink: u1 ends with no roles.
+			expect(u1Calls).toEqual(["PUT", "PUT", "DELETE", "DELETE"]);
 		});
 	});
 });

@@ -1,4 +1,8 @@
-# Ghost → Discord Role Sync
+<p align="center">
+  <a href="https://ltoinel.github.io/ghost-discord-worker/">
+    <img src="docs/social.png" alt="Ghost → Discord Role Sync: turn your Ghost members into a Discord community. Premium roles follow every subscription, automatically." width="100%">
+  </a>
+</p>
 
 [![CI](https://github.com/ltoinel/ghost-discord-worker/actions/workflows/ci.yml/badge.svg)](https://github.com/ltoinel/ghost-discord-worker/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/ltoinel/ghost-discord-worker/actions/workflows/codeql.yml/badge.svg)](https://github.com/ltoinel/ghost-discord-worker/actions/workflows/codeql.yml)
@@ -42,6 +46,10 @@ See [Getting started](https://ltoinel.github.io/ghost-discord-worker/getting-sta
 ## Credits
 
 The single-use code flow and the entitlements token come from the discussion on the Ghost forum: [Discord ↔ Ghost role sync](https://forum.ghost.org/t/discord-ghost-role-sync/61933/8).
+
+## Contributing & security
+
+Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md). To report a vulnerability, follow [SECURITY.md](SECURITY.md) and never open a public issue.
 
 ## License
 

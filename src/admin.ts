@@ -1,5 +1,9 @@
 import type { Env } from "./types";
 import { json, timingSafeEqual, isValidEmail } from "./utils";
+import { removeRole } from "./discord";
+
+/** Discord user IDs are snowflakes: unsigned 64-bit integers written in decimal. */
+const SNOWFLAKE_REGEX = /^\d{17,20}$/;
 
 /** Validates the Bearer token in the Authorization header against the admin secret. */
 function checkAdmin(request: Request, env: Env): boolean {
@@ -10,7 +14,8 @@ function checkAdmin(request: Request, env: Env): boolean {
 
 /**
  * POST /link — Creates a bidirectional email ↔ discord_user_id mapping in KV.
- * Stores both directions: email→userId and discord:userId→email.
+ * Stores both directions: email→userId and discord:userId→email, and drops the stale
+ * reverse entries when either side was previously linked to something else.
  */
 export async function handleLinkPost(request: Request, env: Env): Promise<Response> {
 	if (!checkAdmin(request, env)) {
@@ -32,7 +37,20 @@ export async function handleLinkPost(request: Request, env: Env): Promise<Respon
 		return json({ error: "Invalid email format" }, 400);
 	}
 
+	if (!SNOWFLAKE_REGEX.test(body.discord_user_id)) {
+		return json({ error: "Invalid discord_user_id format" }, 400);
+	}
+
 	const email = body.email.toLowerCase();
+	const previousUserId = await env.GHOST_DISCORD_MAPPING.get(email);
+	if (previousUserId && previousUserId !== body.discord_user_id) {
+		await env.GHOST_DISCORD_MAPPING.delete(`discord:${previousUserId}`);
+	}
+	const previousEmail = await env.GHOST_DISCORD_MAPPING.get(`discord:${body.discord_user_id}`);
+	if (previousEmail && previousEmail !== email) {
+		await env.GHOST_DISCORD_MAPPING.delete(previousEmail);
+	}
+
 	await env.GHOST_DISCORD_MAPPING.put(email, body.discord_user_id);
 	await env.GHOST_DISCORD_MAPPING.put(`discord:${body.discord_user_id}`, email);
 
@@ -40,8 +58,8 @@ export async function handleLinkPost(request: Request, env: Env): Promise<Respon
 }
 
 /**
- * DELETE /link — Removes a bidirectional email ↔ discord_user_id mapping from KV.
- * Cleans up both directions to keep the store consistent.
+ * DELETE /link — Removes the Member and Premium roles, then the bidirectional
+ * email ↔ discord_user_id mapping (same reasoning as /unlink: unlinked roles are never revoked).
  */
 export async function handleLinkDelete(request: Request, env: Env): Promise<Response> {
 	if (!checkAdmin(request, env)) {
@@ -65,10 +83,17 @@ export async function handleLinkDelete(request: Request, env: Env): Promise<Resp
 
 	const email = body.email.toLowerCase();
 	const discordUserId = await env.GHOST_DISCORD_MAPPING.get(email);
-	await env.GHOST_DISCORD_MAPPING.delete(email);
 	if (discordUserId) {
+		const errors = [
+			await removeRole(env, discordUserId, env.DISCORD_ROLE_MEMBER),
+			await removeRole(env, discordUserId, env.DISCORD_ROLE_PREMIUM),
+		].filter(Boolean);
+		if (errors.length > 0) {
+			return json({ error: "Role removal failed; mapping kept", details: errors }, 502);
+		}
 		await env.GHOST_DISCORD_MAPPING.delete(`discord:${discordUserId}`);
 	}
+	await env.GHOST_DISCORD_MAPPING.delete(email);
 
 	return json({ ok: true, email });
 }

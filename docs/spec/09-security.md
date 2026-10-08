@@ -9,6 +9,8 @@
 - Unauthorized admin API access (mapping CRUD).
 - Email enumeration via slash command.
 - Account hijacking via `/link` (one Discord user claiming another user's email) — closed by the JWT/code redemption flow.
+- Role multiplication: one Ghost membership granting roles to several Discord accounts (link, unlink, relink).
+- Exhaustion of the KV write quota (free tier: 1,000 writes/day) by a logged-in member scripting `POST /code`.
 - Timing-attack-driven secret recovery.
 
 ### Out of scope
@@ -16,7 +18,7 @@
 - Compromise of Cloudflare account credentials.
 - Compromise of the Ghost site's member-token signing key (published as JWKS; trusted for both email ownership and the `paid` flag).
 - Compromise of the Discord bot token.
-- Denial of service against the worker (rate limiting / WAF is Cloudflare's concern).
+- Volumetric denial of service against the worker (WAF / DDoS protection is Cloudflare's concern). Application-level abuse of `POST /code` is in scope (see [KV write budget](#kv-write-budget-post-code)).
 - Compromise of Discord's signing infrastructure or Ed25519.
 
 ## Mitigations
@@ -32,13 +34,17 @@
 
 - Ed25519 signature verification using `DISCORD_PUBLIC_KEY`.
 - Verification covers `timestamp + body`, so the signature binds the body byte-for-byte.
+- `X-Signature-Timestamp` must be within ±5 minutes of the Worker's clock, so a captured interaction cannot be replayed later.
 - Verification fails closed (`null` → `401 Invalid signature`).
 
 ### Admin endpoint hijacking (`/link`)
 
 - `Authorization: Bearer <ADMIN_SECRET>` required.
 - `timingSafeEqual` used for the bearer comparison.
-- Email format validation prior to KV writes prevents poisoning the key space with arbitrary strings.
+- Email format validation prior to KV writes prevents poisoning the key space with arbitrary strings; `POST /link` also requires `discord_user_id` to be a snowflake (`/^\d{17,20}$/`), so it cannot write keys like `discord:undefined` or other arbitrary strings.
+- `POST /link` deletes stale reverse entries when the email or the Discord user was previously linked elsewhere, so an admin re-link cannot leave a dangling `discord:<old_user>` → email or `<old_email>` → user key that would break the 1:1 invariant.
+- `DELETE /link` removes both roles before deleting the mapping, and keeps the mapping (`502`) if removal fails — same rationale as [`/unlink`](#role-revocation-on-unlink).
+- Malformed percent-encoding in `GET /link/:email` is rejected with `400` instead of surfacing as an uncaught exception.
 
 ### `/link` slash command — proof of email ownership
 
@@ -47,24 +53,37 @@ The linking flow requires the Discord user to first obtain a code from the Ghost
 1. The Ghost site (logged-in member session) fetches `/members/api/entitlements` and calls `POST /code` with the resulting Ghost-issued member entitlement JWT (5-minute expiry).
 2. The Worker verifies the JWT signature against Ghost's published JWKS — only an authenticated Ghost session can produce a valid JWT — and requires `scope === "members:entitlements:read"` with a boolean `paid` claim. Identity tokens (`/members/api/session`) are rejected, so a token issued for a different purpose cannot be replayed here.
 3. The Worker writes `code:<CODE> → {"email", "paid"}` to KV with a 10-minute TTL and returns the code.
-4. The user types `/link <CODE>` in Discord. The Worker reads `{ email, paid }` from KV, applies 1:1 conflict checks, writes the mapping, assigns roles from `paid`, and **deletes the code** (single-use).
+4. The user types `/link <CODE>` in Discord. The Worker reads `{ email, paid }` from KV, applies 1:1 conflict checks, **deletes the code** (single-use), then writes the mapping and assigns roles from `paid`.
 
 This closes the impersonation gap from earlier designs: an attacker can no longer claim an arbitrary Ghost email by guessing it in Discord, because they cannot mint a valid JWT without controlling the Ghost session for that email. Discord-side conflict checks (below) defend against an attacker who somehow obtains a code in transit.
 
 ### 1:1 mapping conflict checks
 
-Two conflict checks still run before any KV write or role assignment:
+Two conflict checks still run before any KV write or role assignment (and before the code is consumed, so a rejected attempt does not burn the code):
 
 1. **Email-side**: If the email (resolved from the code) is already mapped to a different Discord user, reject.
 2. **Discord-side**: If the invoking Discord user is already linked to a different email, reject and require `/unlink` first.
 
 Re-linking the same `(email, userId)` pair is idempotent.
 
+### Role revocation on unlink
+
+Roles are only ever revoked through a mapping: Ghost webhooks look up `email → discord_user_id`. If `/unlink` deleted the mapping but left the roles, nothing could revoke them later, and a single membership could hand roles to an unlimited number of Discord accounts (link account A, unlink, mint a new code, link account B, …). `/unlink` and admin `DELETE /link` therefore remove the Member and Premium roles **first** and delete the mapping only if removal succeeded. A Discord `404` (member already left the guild) counts as success. Any other failure keeps the mapping, so webhooks still govern the roles and the operation can be retried.
+
+### KV write budget (`POST /code`)
+
+Before, every `POST /code` call wrote a new code, so any logged-in member could script it and exhaust the KV free-tier quota (1,000 writes/day), breaking linking for everyone. Now:
+
+- **One live code per member.** `pending:<email>` points to the member's current code. While it has ≥ 120 s left, the same `paid` value, and `code:<CODE>` still holds the email, the same code is returned and **nothing is written**. A new code (two writes) is minted only when there is no reusable one.
+- **Optional per-member rate limit.** If the `CODE_RATE_LIMITER` binding is configured ([08 — Configuration](./08-configuration.md#rate-limiting-optional)), calls beyond its limit (sample: 5 per 60 s per email) get `429` with `Retry-After: 60`.
+
+Only members can reach this code path (a valid Ghost-signed JWT is required first), so the budget cannot be drained anonymously.
+
 ### Code security properties
 
-- **Entropy**: 8 chars × log₂(32) = 40 bits. Combined with the 10-minute TTL, brute-force redemption is impractical (no rate limiting is implemented, but Discord slash command latency caps attack throughput sharply).
+- **Entropy**: 8 chars × log₂(32) = 40 bits. Combined with the 10-minute TTL, brute-force redemption is impractical (`/link` redemption itself is not rate-limited by the Worker, but Discord slash command latency and Discord's own per-user limits cap attack throughput sharply).
 - **Lifetime**: `expirationTtl: 600` on the KV write, plus explicit delete on successful redemption.
-- **Single-use**: Successful `/link` deletes the code entry; subsequent attempts see "Invalid or expired code."
+- **Single-use**: Once the conflict checks pass, `/link` deletes the code entry **before** writing the mapping; subsequent attempts see "Invalid or expired code." See [Residual risks](#residual-risks) for the limits of this under KV's eventual consistency.
 - **Out-of-band channel**: The code travels browser → Ghost-site display → user's screen → Discord client. There is no transmission of the code via email, SMS, or any other channel that could be intercepted.
 - **Scope**: The code unlocks only the email it was minted for (and grants Premium only if `paid` was true in the signed token); it carries no other authority.
 - **Integrity of the stored value**: `{ email, paid }` is written only by `POST /code` after signature verification. A malformed or legacy (bare-email) value is treated as "Invalid or expired code".
@@ -79,7 +98,7 @@ Trade-off:
 - Once the mapping exists, later status changes are handled by the `member.updated` / `member.deleted` webhooks as usual.
 - A status change (upgrade, downgrade, cancellation, deletion) that happens **between minting and redeeming** the code is **not** re-checked — the previous Admin API lookup used to cover that window. Webhooks fired in that window find no mapping yet and are skipped. Worst case: a member who downgraded in those ≤ 10 minutes keeps the Premium role until the next tier change or manual correction (and, symmetrically, an upgrade in that window is not reflected until the next update).
 
-The admin `POST /link` endpoint does not consult Ghost at all (trusted caller) and assigns no roles.
+The admin `POST /link` endpoint does not consult Ghost at all (trusted caller) and assigns no roles. Admin `DELETE /link` removes the roles (see [Role revocation on unlink](#role-revocation-on-unlink)).
 
 ### Email validation
 
@@ -88,7 +107,7 @@ The admin `POST /link` endpoint does not consult Ghost at all (trusted caller) a
 - `/link` slash command
 - `POST /link` admin
 - `DELETE /link` admin
-- `GET /link/:email` admin
+- `GET /link/:email` admin (after percent-decoding; a malformed encoding is a `400`)
 
 Webhook payloads are **not** re-validated against this regex — Ghost is trusted to send well-formed emails. (Emails are still lowercased before KV access.)
 
@@ -149,5 +168,18 @@ The following defenses are implemented in code; tests cover each path.
 - **Entitlement scope check** (`src/code.ts`). `POST /code` requires `scope === "members:entitlements:read"` and a boolean `paid` claim; identity tokens and tokens missing `paid` are rejected with `401`.
 - **Discord signature throw-safety** (`src/discord.ts:verifyDiscordSignature`). Hex decoding and key import are wrapped in `try/catch`; any failure returns `null` → `401`. A malformed `X-Signature-Ed25519` header can no longer surface as a 500.
 - **Required JWT `kid`** (`src/jwt.ts`). JWTs without a `kid` header are rejected before key lookup, removing the "first key in JWKS" fallback that could mask key rotation.
-- **JWT `iss` origin check** (`src/jwt.ts:sameOrigin`). The issuer is compared by parsed URL origin (scheme + host + port). Prefix-matching attacks like `iss=https://ghost.test.attacker.com` are rejected even if `GHOST_URL` starts with the same string.
+- **JWKS refresh on unknown `kid`** (`src/jwt.ts`). An unknown `kid` forces one JWKS refetch, at most once per minute per isolate. Ghost key rotation is picked up immediately instead of failing for up to the 1-hour cache lifetime, and forged random `kid`s cannot make the Worker hammer Ghost's JWKS endpoint.
+- **Required JWT `iss` and `aud`** (`src/jwt.ts:sameOrigin`). Both claims must be present and match `GHOST_URL` by parsed URL origin (scheme + host + port); `aud` may be a string or an array. Prefix-matching attacks like `iss=https://ghost.test.attacker.com` are rejected even if `GHOST_URL` starts with the same string, and a token lacking these claims is no longer accepted on the strength of the signature alone.
+- **Discord interaction timestamp window** (`src/discord.ts:verifyDiscordSignature`). `X-Signature-Timestamp` must be an integer within ±5 minutes of now; otherwise `401`.
+- **Roles removed on unlink** (`src/commands.ts`, `src/admin.ts`). `/unlink` and admin `DELETE /link` remove both roles before deleting the mapping and keep the mapping when removal fails.
+- **Code consumed before mapping write** (`src/commands.ts`). Narrows the double-redemption window (see [Residual risks](#residual-risks)).
+- **One live code per member + optional rate limit** (`src/code.ts`). Bounds KV writes from `POST /code`.
+- **Admin input validation** (`src/admin.ts`, `src/index.ts`). Snowflake check on `discord_user_id`, stale reverse-entry cleanup on `POST /link`, `400` on malformed percent-encoding in `GET /link/:email`.
 - **Defensive `userId` resolution** (`src/commands.ts`). Slash command handlers accept either `member.user.id` (guild interactions) or `user.id` (DM/user-app interactions). If neither is present, the interaction is rejected with a polite ephemeral reply rather than writing `discord:undefined` to KV.
+
+## Residual Risks
+
+- **Double redemption under eventual consistency.** Deleting the code before writing the mapping closes the race between two concurrent `/link` calls handled in the same Cloudflare location — which is the normal case, since Discord sends interactions from its own infrastructure. KV is eventually consistent across locations, though, so this is not a strict guarantee: a second redemption served by another location could still read the code before the delete propagates. A strict single-use guarantee would need a strongly consistent store (Durable Objects). The impact is bounded to that one code: only the last writer ends up in the forward `email → discord_user_id` key that webhooks use, so the other Discord account could keep roles that no webhook will revoke (an admin can spot it via its leftover `discord:<id>` key and remove the roles by hand).
+- **Code reuse relies on KV reads.** For the same reason, two near-simultaneous `POST /code` calls (or calls served by different locations) can each mint a code. Each is still single-use and expires after 10 minutes; the optional rate limiter (itself approximate and per location) is the cap on repeated calls.
+- **Webhook replay within the 5-minute window.** There is no nonce store, so a captured Ghost webhook can be replayed while its timestamp is fresh. The operations are idempotent (adding a role that is present, removing one that is absent), so a replay can only re-apply the state Ghost already announced.
+- **Stale roles after an admin re-link.** `POST /link` cleans up stale KV entries but does not touch Discord roles: if it moves an email to a new Discord user, the previous user keeps whatever roles they had. Use `DELETE /link` first when reassigning.

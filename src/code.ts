@@ -6,6 +6,8 @@ import { verifyGhostMemberJWT } from "./jwt";
 const ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 const CODE_LENGTH = 8;
 const CODE_TTL_SECONDS = 600;
+/** An existing code is handed out again only if the member still has at least this long to use it. */
+const MIN_REUSE_SECONDS = 120;
 /** Scope of the token served by Ghost's `/members/api/entitlements` (vs `members:identity` for `/session`). */
 const ENTITLEMENT_SCOPE = "members:entitlements:read";
 
@@ -30,6 +32,41 @@ function corsHeaders(env: Env): Record<string, string> {
 	};
 }
 
+/** Parses a `code:<CODE>` KV value; returns null when missing or malformed. */
+export function parsePendingLink(raw: string | null): PendingLink | null {
+	if (!raw) return null;
+	try {
+		const v = JSON.parse(raw);
+		return typeof v?.email === "string" && typeof v?.paid === "boolean" ? v : null;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Returns the member's still-valid code (tracked under `pending:<email>`) instead of minting
+ * a new one, so repeated clicks or scripted calls cost KV reads, not KV writes.
+ * A code is not reused if the member's `paid` status changed since it was minted.
+ */
+async function findReusableCode(
+	env: Env,
+	email: string,
+	paid: boolean,
+): Promise<{ code: string; expires_in: number } | null> {
+	const { value: code, metadata } = await env.GHOST_DISCORD_MAPPING.getWithMetadata<{ expiresAt: number }>(
+		`pending:${email}`,
+	);
+	if (!code || !metadata) return null;
+
+	const remaining = Math.floor((metadata.expiresAt - Date.now()) / 1000);
+	if (remaining < MIN_REUSE_SECONDS) return null;
+
+	const entry = parsePendingLink(await env.GHOST_DISCORD_MAPPING.get(`code:${code}`));
+	if (!entry || entry.email !== email || entry.paid !== paid) return null;
+
+	return { code, expires_in: remaining };
+}
+
 /** Responds to the CORS preflight from the Ghost site's browser JS. */
 export function handleCodeOptions(env: Env): Response {
 	return new Response(null, { status: 204, headers: corsHeaders(env) });
@@ -40,6 +77,7 @@ export function handleCodeOptions(env: Env): Response {
  * The JWT proves the caller controls the Ghost member email and carries the `paid` flag,
  * so no Admin API lookup is needed. The code is stored in KV (key `code:<code>`,
  * value `{ email, paid }` JSON) with a 10-minute TTL and is single-use.
+ * Each member has at most one live code; the optional CODE_RATE_LIMITER binding caps calls per email.
  */
 export async function handleCodePost(request: Request, env: Env): Promise<Response> {
 	const headers = corsHeaders(env);
@@ -68,10 +106,26 @@ export async function handleCodePost(request: Request, env: Env): Promise<Respon
 		return json({ error: "Token missing email claim" }, 400, headers);
 	}
 
+	if (env.CODE_RATE_LIMITER) {
+		const { success } = await env.CODE_RATE_LIMITER.limit({ key: email });
+		if (!success) {
+			return json({ error: "Too many requests, please wait a minute" }, 429, { ...headers, "Retry-After": "60" });
+		}
+	}
+
+	const reusable = await findReusableCode(env, email, claims.paid);
+	if (reusable) {
+		return json(reusable, 200, headers);
+	}
+
 	const code = generateCode();
 	const pending: PendingLink = { email, paid: claims.paid };
 	await env.GHOST_DISCORD_MAPPING.put(`code:${code}`, JSON.stringify(pending), {
 		expirationTtl: CODE_TTL_SECONDS,
+	});
+	await env.GHOST_DISCORD_MAPPING.put(`pending:${email}`, code, {
+		expirationTtl: CODE_TTL_SECONDS,
+		metadata: { expiresAt: Date.now() + CODE_TTL_SECONDS * 1000 },
 	});
 
 	console.log(`code issued for ${email} (paid=${claims.paid})`);

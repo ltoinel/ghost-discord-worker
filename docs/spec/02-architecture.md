@@ -64,7 +64,7 @@ The router is a flat sequence of `path === "..." && method === "..."` checks. No
 | `/link/<email>` | GET | `handleLinkGet` |
 | (anything else) | any | `404 { error: "Not found" }` |
 
-For `/link/<email>`, the email is extracted as `decodeURIComponent(path.slice(6))`.
+For `/link/<email>`, the email is extracted as `decodeURIComponent(path.slice(6))`; malformed percent-encoding returns `400 { error: "Invalid email format" }`.
 
 ## Data Flow — Ghost Webhook
 
@@ -99,15 +99,20 @@ For `/link/<email>`, the email is extracted as `decodeURIComponent(path.slice(6)
    preserving the request body and setting Host to the Worker domain.
 5. Worker.verifyGhostMemberJWT():
      - Decode header; require alg ∈ {RS256, RS384, RS512} and a non-empty kid.
-     - Fetch JWKS from <GHOST_URL>/members/.well-known/jwks.json (cached 1h per isolate).
+     - Fetch JWKS from <GHOST_URL>/members/.well-known/jwks.json (cached 1h per isolate;
+       an unknown kid forces one refetch, at most once per minute).
      - RSASSA-PKCS1-v1_5 verify signature with the hash matching the alg, against the JWK whose kid matches.
-     - Validate exp and (if present) iss origin equals GHOST_URL origin.
+     - Validate exp, and require iss and aud whose origin equals GHOST_URL origin.
    handleCodePost() then requires scope === "members:entitlements:read" and a boolean paid claim
    (identity tokens from /members/api/session are rejected with 401).
-6. Worker generates 8-char base32 code;
+6. If the optional CODE_RATE_LIMITER binding is set: limit({ key: email }); rejected → 429 (Retry-After: 60).
+7. If pending:<email> points to a code with ≥ 120 s left, same paid value, and code:<code> still
+   holding this email → return { code, expires_in: <remaining> } without any KV write.
+8. Otherwise generate an 8-char base32 code;
    KV.put("code:<code>", JSON.stringify({ email, paid }), { expirationTtl: 600 }).
-7. Worker returns { code, expires_in: 600 }; nginx streams the response back.
-8. Page displays the code with copy button and countdown.
+   KV.put("pending:<email>", code, { expirationTtl: 600, metadata: { expiresAt } }).
+9. Worker returns { code, expires_in: 600 }; nginx streams the response back.
+10. Page displays the code with copy button and countdown.
 ```
 
 When the nginx hop is skipped (direct browser → Worker), the flow is identical except the browser issues an `OPTIONS /code` preflight that the Worker answers with CORS headers locked to `GHOST_URL`.
@@ -117,15 +122,16 @@ When the nginx hop is skipped (direct browser → Worker), the flow is identical
 ```
 1. Discord POSTs to /discord with X-Signature-Ed25519 + X-Signature-Timestamp headers.
 2. verifyDiscordSignature():
+     - Reject if X-Signature-Timestamp is more than 5 minutes from now (replay protection).
      - Ed25519.verify(timestamp + body) against DISCORD_PUBLIC_KEY.
 3. If interaction.type === 1 (PING) → reply { type: 1 } (Discord health check).
 4. If interaction.type === 2 (APPLICATION_COMMAND):
      - "link" → handleLinkCommand:
          - Read code; KV.get("code:<code>") → { email, paid } (missing/malformed → "Invalid or expired").
          - Conflict checks (1:1 email ↔ user_id).
-         - Write mapping (both directions), delete code (single-use).
+         - Delete code (single-use), then write mapping (both directions).
          - Assign Member role + Premium role if paid (no Ghost Admin API call).
-     - "unlink" → handleUnlinkCommand (delete mapping).
+     - "unlink" → handleUnlinkCommand (remove both roles; on success delete mapping, on failure keep it).
 5. Reply with type 4 + flags 64 (ephemeral message, visible to invoker only).
 ```
 
@@ -134,12 +140,13 @@ When the nginx hop is skipped (direct browser → Worker), the flow is identical
 ```
 1. Operator (or external system) calls /link with Authorization: Bearer <ADMIN_SECRET>.
 2. checkAdmin(): timingSafeEqual of bearer vs ADMIN_SECRET.
-3. POST: validate email, write email→user_id AND discord:user_id→email.
-4. DELETE: read email→user_id, delete both directions.
+3. POST: validate email and discord_user_id (snowflake), drop stale reverse entries,
+   write email→user_id AND discord:user_id→email.
+4. DELETE: read email→user_id, remove both roles (502 and mapping kept on failure), delete both directions.
 5. GET: read email→user_id, return JSON or 404.
 ```
 
-Admin endpoints do **not** verify the email exists in Ghost; they trust the caller. They also do **not** assign Discord roles — they only manage the KV mapping.
+Admin endpoints do **not** verify the email exists in Ghost; they trust the caller. They never **assign** Discord roles; `DELETE /link` removes them so that an unlinked account cannot keep roles no webhook will ever revoke.
 
 ## Deployment Topology
 

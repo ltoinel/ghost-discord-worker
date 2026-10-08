@@ -9,6 +9,8 @@ export interface Env {
 	DISCORD_ROLE_PREMIUM: string;
 	DISCORD_PUBLIC_KEY: string;
 	GHOST_URL: string;
+	/** Optional Workers rate-limit binding applied per member email on POST /code. */
+	CODE_RATE_LIMITER?: RateLimit;
 }
 
 export type MemberStatus = "free" | "paid" | "comped";
