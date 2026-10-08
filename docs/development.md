@@ -29,7 +29,7 @@ npm run dev
 | `npm test` | Unit tests (Vitest, plain Node ≥ 20) |
 | `npm run test:coverage` | Tests + coverage report; **fails under 90%** on lines, statements, branches or functions |
 | `npm run test:watch` | Vitest watch mode |
-| `npm run deploy` | Runs [`./deploy.sh`](getting-started.md#1-deploy-the-worker) |
+| `npm run deploy` | Runs [`./deploy.sh`](setup/2-deploy.md#24-deploy) |
 | `npm run types` | Generate Worker types (`wrangler types`) |
 
 ## Git hooks

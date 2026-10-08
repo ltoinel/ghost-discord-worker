@@ -160,16 +160,11 @@
 }
 
 /* ── Card grid ─────────────────────────────────────────────────────────── */
-/* 4 cards: one row on wide screens, 2×2 on medium, stacked on phones. */
+/* 3 cards: one row on wide screens, stacked on narrow ones. */
 .md-typeset .grid.cards > ul {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
-@media screen and (max-width: 76.1875em) {
-  .md-typeset .grid.cards > ul {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-@media screen and (max-width: 44.9375em) {
+@media screen and (max-width: 59.9375em) {
   .md-typeset .grid.cards > ul {
     grid-template-columns: 1fr;
   }
@@ -204,4 +199,39 @@
 /* Hide the auto-generated title on the landing page (the hero has its own). */
 .md-content__inner > .gd-hero:first-child + h1 {
   display: none;
+}
+
+/* ── Installation stepper ──────────────────────────────────────────────── */
+.gd-stepper {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 0.4rem;
+  margin: 0 0 1.6rem;
+  counter-reset: step;
+}
+.md-typeset .gd-stepper a {
+  display: block;
+  padding: 0.45rem 0.5rem 0.4rem;
+  border-top: 3px solid var(--gd-card-border);
+  font-size: 0.62rem;
+  line-height: 1.3;
+  color: var(--md-default-fg-color--light);
+}
+.md-typeset .gd-stepper a b {
+  display: block;
+  font-size: 0.58rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.8;
+}
+.md-typeset .gd-stepper a.done {
+  border-top-color: var(--md-accent-fg-color);
+}
+.md-typeset .gd-stepper a.current {
+  border-top-color: var(--md-primary-fg-color);
+  color: var(--md-primary-fg-color);
+  font-weight: 650;
+}
+@media screen and (max-width: 44.9375em) {
+  .gd-stepper { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }

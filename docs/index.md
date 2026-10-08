@@ -15,8 +15,7 @@ Your Ghost members link their Discord account in one click, and keep the right r
 <strong>Membre</strong> for everyone, <strong>Membre Premium</strong> for paid and comped members.
 </p>
 
-[Get started :material-rocket-launch:](getting-started.md){ .md-button .md-button--primary }
-[Discord setup :fontawesome-brands-discord:](discord-setup.md){ .md-button }
+[Install in 6 steps :material-rocket-launch:](setup/index.md){ .md-button .md-button--primary }
 [Read the spec :material-book-open-variant:](spec/index.md){ .md-button }
 
 </div>
@@ -29,7 +28,7 @@ Your Ghost members link their Discord account in one click, and keep the right r
 
     Members prove they own their Ghost email with a Ghost-signed **entitlement JWT**, verified against your site's JWKS. No email typing, no spoofing.
 
-    [:octicons-arrow-right-24: Authentication](spec/05-authentication.md)
+    [:octicons-arrow-right-24: Authentication](spec/security.md#authentication-schemes)
 
 -   :material-lightning-bolt:{ .lg .middle } __Real-time sync__
 
@@ -37,7 +36,7 @@ Your Ghost members link their Discord account in one click, and keep the right r
 
     Ghost `member.added`, `member.updated` and `member.deleted` webhooks add or remove roles the moment a subscription changes.
 
-    [:octicons-arrow-right-24: Event handling](spec/06-event-handling.md)
+    [:octicons-arrow-right-24: Event handling](spec/flows.md#role-sync-ghost-webhooks)
 
 -   :material-cloud-outline:{ .lg .middle } __Serverless & cheap__
 
@@ -45,15 +44,7 @@ Your Ghost members link their Discord account in one click, and keep the right r
 
     One Cloudflare Worker plus one KV namespace. Fits comfortably in the free tier, deploys with a single `./deploy.sh`.
 
-    [:octicons-arrow-right-24: Getting started](getting-started.md)
-
--   :material-check-decagram:{ .lg .middle } __Audited by CI__
-
-    ---
-
-    Type-checking, ≥ 90% test coverage, CodeQL, `npm audit`, dependency review and secret scanning on every push.
-
-    [:octicons-arrow-right-24: Security model](spec/09-security.md)
+    [:octicons-arrow-right-24: Installation guide](setup/index.md)
 
 </div>
 

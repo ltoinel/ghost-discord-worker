@@ -51,7 +51,7 @@ Out of scope:
 ## Security model
 
 The threat model, the authentication schemes and the known residual risks are documented in the
-[security specification](https://ltoinel.github.io/ghost-discord-worker/spec/09-security/).
+[security specification](https://ltoinel.github.io/ghost-discord-worker/spec/security/).
 
 Every push is checked by CodeQL, `npm audit`, dependency review, gitleaks secret scanning and ShellCheck (see [Development](https://ltoinel.github.io/ghost-discord-worker/development/#continuous-integration)).
 
