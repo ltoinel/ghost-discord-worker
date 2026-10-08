@@ -28,6 +28,8 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
+      - name: Lint
+        run: npm run lint
       - name: Type-check
         run: npm run build
       - name: Unit tests with coverage (≥ 90% enforced)
@@ -63,7 +65,7 @@ jobs:
       - name: Verify registry signatures
         run: npm audit signatures
       - name: ShellCheck deploy.sh
-        run: shellcheck deploy.sh
+        run: shellcheck deploy.sh .githooks/*
 
   dependency-review:
     name: Dependency review

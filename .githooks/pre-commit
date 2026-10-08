@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+#
+# Pre-commit: refuses commits on main, then lints what is being committed.
+# Enabled by `npm install` (prepare script → git config core.hooksPath .githooks).
+# Bypass in an emergency with `git commit --no-verify`.
+
+set -euo pipefail
+
+RED=$'\e[31m' GREEN=$'\e[32m' YELLOW=$'\e[33m' RESET=$'\e[0m'
+fail() { printf '%s✗ %s%s\n' "$RED" "$1" "$RESET" >&2; exit 1; }
+ok()   { printf '%s✓ %s%s\n' "$GREEN" "$1" "$RESET"; }
+warn() { printf '%s! %s%s\n' "$YELLOW" "$1" "$RESET"; }
+
+branch=$(git symbolic-ref --short HEAD 2>/dev/null || true)
+if [[ "$branch" == "main" ]]; then
+	fail "Committing on main is not allowed. Create a branch first: git switch -c <branch>"
+fi
+
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+[[ -n "$staged" ]] || exit 0
+
+npx --no-install biome lint --staged --error-on-warnings --no-errors-on-unmatched \
+	|| fail "Lint failed (npm run lint)"
+ok "Lint"
+
+if grep -qE '\.(ts|mts)$' <<<"$staged"; then
+	npx --no-install tsc --noEmit || fail "Type-check failed (npm run build)"
+	ok "Type-check"
+fi
+
+if grep -qE '(^|/)deploy\.sh$|^\.githooks/' <<<"$staged"; then
+	if command -v shellcheck >/dev/null; then
+		shellcheck deploy.sh .githooks/* || fail "ShellCheck failed"
+		ok "ShellCheck"
+	else
+		warn "shellcheck not installed, skipped (CI runs it)"
+	fi
+fi
+
+if command -v gitleaks >/dev/null; then
+	gitleaks git --pre-commit --staged --redact --no-banner -c .gitleaks.toml . \
+		|| fail "gitleaks found a secret in the staged changes"
+	ok "Secret scan"
+else
+	warn "gitleaks not installed, secret scan skipped (CI runs it)"
+fi

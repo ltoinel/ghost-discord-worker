@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+#
+# Pre-push: refuses pushes to main, then runs the unit tests with the coverage gate.
+# Bypass in an emergency with `git push --no-verify`.
+
+set -euo pipefail
+
+RED=$'\e[31m' GREEN=$'\e[32m' RESET=$'\e[0m'
+fail() { printf '%s✗ %s%s\n' "$RED" "$1" "$RESET" >&2; exit 1; }
+
+# Git passes one line per pushed ref: <local ref> <local sha> <remote ref> <remote sha>
+while read -r _local_ref _local_sha remote_ref _remote_sha; do
+	if [[ "$remote_ref" == "refs/heads/main" ]]; then
+		fail "Pushing to main is not allowed. Push a branch and open a pull request."
+	fi
+done
+
+npm run --silent test:coverage || fail "Unit tests failed (npm run test:coverage)"
+printf '%s✓ Unit tests and coverage%s\n' "$GREEN" "$RESET"
