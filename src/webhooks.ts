@@ -25,15 +25,15 @@ async function verifyGhostSignature(request: Request, env: Env): Promise<string 
 		const [k, v] = part.trim().split("=", 2);
 		if (k && v) parts[k] = v;
 	}
-	const receivedHex = parts["sha256"];
-	const timestamp = parts["t"];
+	const receivedHex = parts.sha256;
+	const timestamp = parts.t;
 	if (!receivedHex || !timestamp) return null;
 
 	// Ghost uses Date.now() (milliseconds) for the timestamp.
 	// Reject requests older than 5 minutes to prevent replay attacks.
 	const ts = parseInt(timestamp, 10);
 	const now = Date.now();
-	if (isNaN(ts) || Math.abs(now - ts) > 5 * 60 * 1000) return null;
+	if (Number.isNaN(ts) || Math.abs(now - ts) > 5 * 60 * 1000) return null;
 
 	const body = await request.text();
 

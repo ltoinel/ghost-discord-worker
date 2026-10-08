@@ -4,6 +4,16 @@ import { verifyDiscordSignature, addRole, removeRole } from "./discord";
 import { parsePendingLink } from "./code";
 
 const InteractionType = { PING: 1, APPLICATION_COMMAND: 2 } as const;
+
+/** The subset of a Discord interaction payload this Worker reads. */
+interface DiscordInteraction {
+	type: number;
+	data?: { name?: string; options?: { name: string; value: unknown }[] };
+	/** Set for guild interactions. */
+	member?: { user?: { id?: string } };
+	/** Set for DM / user-app interactions. */
+	user?: { id?: string };
+}
 const MessageFlags = { EPHEMERAL: 64 } as const;
 
 /** Creates a Discord ephemeral reply visible only to the invoking user. */
@@ -21,7 +31,7 @@ export async function handleDiscordInteraction(request: Request, env: Env): Prom
 		return json({ error: "Invalid signature" }, 401);
 	}
 
-	const interaction = JSON.parse(body);
+	const interaction = JSON.parse(body) as DiscordInteraction;
 
 	if (interaction.type === InteractionType.PING) {
 		return json({ type: InteractionType.PING });
@@ -55,8 +65,8 @@ export async function handleDiscordInteraction(request: Request, env: Env): Prom
  * enforces 1:1 mapping between email and Discord account, stores the bidirectional
  * mapping, and assigns Discord roles from the `paid` flag captured with the code.
  */
-async function handleLinkCommand(interaction: any, userId: string, env: Env): Promise<Response> {
-	const rawCode = interaction.data.options?.[0]?.value;
+async function handleLinkCommand(interaction: DiscordInteraction, userId: string, env: Env): Promise<Response> {
+	const rawCode = interaction.data?.options?.[0]?.value;
 	if (!rawCode) {
 		return ephemeralReply("Please provide your linking code. Visit your Ghost site to generate one.");
 	}

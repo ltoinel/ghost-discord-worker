@@ -25,11 +25,23 @@ To run the Worker locally, create a `.dev.vars` file (it is git-ignored) as desc
 npm run dev
 ```
 
+## Git hooks
+
+`npm ci` enables the hooks in `.githooks/` (`git config core.hooksPath .githooks`):
+
+| Hook | Checks |
+|---|---|
+| `pre-commit` | Refuses commits on `main` · Biome lint on staged files · type-check when TypeScript changes · ShellCheck when `deploy.sh` or a hook changes · gitleaks on the staged diff |
+| `pre-push` | Refuses pushes to `main` · unit tests with the 90% coverage gate |
+
+ShellCheck and gitleaks run only if they are installed locally; CI always runs them. Work on a branch and open a pull request: `main` only changes through merged pull requests.
+
 ## Checks to run before opening a pull request
 
 CI runs the same checks and blocks the merge if one fails.
 
 ```sh
+npm run lint           # Biome lint, warnings fail
 npm run build          # type-check (tsc --noEmit)
 npm run test:coverage  # unit tests; fails under 90% coverage
 npm audit              # no moderate or worse vulnerability

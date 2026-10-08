@@ -8,7 +8,7 @@ const SNOWFLAKE_REGEX = /^\d{17,20}$/;
 /** Validates the Bearer token in the Authorization header against the admin secret. */
 function checkAdmin(request: Request, env: Env): boolean {
 	const auth = request.headers.get("Authorization");
-	if (!auth || !auth.startsWith("Bearer ")) return false;
+	if (!auth?.startsWith("Bearer ")) return false;
 	return timingSafeEqual(auth.slice(7), env.ADMIN_SECRET);
 }
 

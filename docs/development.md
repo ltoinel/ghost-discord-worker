@@ -24,6 +24,7 @@ npm run dev
 | Command | What it does |
 |---|---|
 | `npm run dev` | Local dev server (`wrangler dev`) |
+| `npm run lint` | Lint with [Biome](https://biomejs.dev/) (warnings fail) |
 | `npm run build` | Type-check (`tsc --noEmit`) |
 | `npm test` | Unit tests (Vitest, plain Node ≥ 20) |
 | `npm run test:coverage` | Tests + coverage report; **fails under 90%** on lines, statements, branches or functions |
@@ -31,13 +32,24 @@ npm run dev
 | `npm run deploy` | Runs [`./deploy.sh`](getting-started.md#1-deploy-the-worker) |
 | `npm run types` | Generate Worker types (`wrangler types`) |
 
+## Git hooks
+
+`npm ci` enables the versioned hooks in `.githooks/`:
+
+| Hook | Checks |
+|---|---|
+| `pre-commit` | Refuses commits on `main` · Biome lint on staged files · type-check when TypeScript changes · ShellCheck when `deploy.sh` or a hook changes · gitleaks on the staged diff |
+| `pre-push` | Refuses pushes to `main` · unit tests with the 90% coverage gate |
+
+ShellCheck and gitleaks are optional locally (the hook warns and continues); CI always runs them. `--no-verify` bypasses a hook in an emergency.
+
 ## Continuous integration
 
 Every push and pull request runs:
 
 | Workflow | Checks |
 |---|---|
-| **CI** | Type-check and tests with the coverage gate on Node 20, 22 and 24 · `npm audit` (fails on moderate or worse, dev dependencies included) · `npm audit signatures` · ShellCheck on `deploy.sh` · gitleaks secret scan over the full history · dependency review on pull requests |
+| **CI** | Lint, type-check and tests with the coverage gate on Node 20, 22 and 24 · `npm audit` (fails on moderate or worse, dev dependencies included) · `npm audit signatures` · ShellCheck on `deploy.sh` · gitleaks secret scan over the full history · dependency review on pull requests |
 | **CodeQL** | `security-extended` queries for TypeScript and the GitHub Actions workflows, also weekly |
 | **Docs** | Builds this site with `mkdocs build --strict` and publishes it to GitHub Pages from `main` |
 

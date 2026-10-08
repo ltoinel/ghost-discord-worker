@@ -43,7 +43,7 @@ describe("isValidEmail", () => {
 	});
 
 	it("rejects > 254 chars", () => {
-		const long = "a".repeat(250) + "@b.co";
+		const long = `${"a".repeat(250)}@b.co`;
 		expect(isValidEmail(long)).toBe(false);
 	});
 });
